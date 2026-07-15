@@ -84,3 +84,13 @@ class Grant(Base):
     transmit_expire_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     terminated: Mapped[bool] = mapped_column(Boolean, default=False)
     grant_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class AdminInjectedData(Base):
+    """Stores admin-injected incumbents / PAL / PPA for Spectrum Inquiry simulation."""
+
+    __tablename__ = "admin_injected_data"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)  # fss|wisp|pal|zone
+    data_json: Mapped[str] = mapped_column(Text)

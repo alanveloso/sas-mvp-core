@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.models import Cbsd, Grant
 from schemas.registration import RegistrationBatchRequest
+from schemas.spectrum_inquiry import SpectrumInquiryBatchRequest
 from services.registration_service import process_registration
+from services.spectrum_inquiry_service import process_spectrum_inquiry
 
 router = APIRouter(prefix="/v1.2", tags=["cbsd-sas"])
 
@@ -110,16 +112,10 @@ async def heartbeat(body: dict[str, Any], db: Session = Depends(get_db)):
 
 
 @router.post("/spectrumInquiry")
-async def spectrum_inquiry(body: dict[str, Any]):
-    responses = []
-    for req in body.get("spectrumInquiryRequest") or []:
-        responses.append(
-            {
-                "cbsdId": req.get("cbsdId"),
-                "availableChannel": [],
-                "response": {"responseCode": 0},
-            }
-        )
+def spectrum_inquiry(
+    body: SpectrumInquiryBatchRequest, db: Session = Depends(get_db)
+):
+    responses = process_spectrum_inquiry(db, body.spectrumInquiryRequest)
     return JSONResponse({"spectrumInquiryResponse": responses})
 
 

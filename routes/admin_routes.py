@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db, reset_db
 from models.models import (
+    AdminInjectedData,
     BlacklistedFccId,
     ConditionalRegistration,
     CpiUser,
@@ -30,6 +31,16 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 def _empty_ok() -> Response:
     return Response(status_code=200, content=b"", media_type="application/json")
+
+
+def _store_injection(db: Session, kind: str, payload: Any) -> None:
+    db.add(
+        AdminInjectedData(
+            kind=kind,
+            data_json=json.dumps(payload if payload is not None else {}),
+        )
+    )
+    db.commit()
 
 
 @router.post("/reset")
@@ -112,25 +123,88 @@ def blacklist_fcc_id(body: BlacklistFccIdRequest, db: Session = Depends(get_db))
     return _empty_ok()
 
 
-@router.post("/get_daily_activities_status")
-def get_daily_activities_status():
-    return JSONResponse({"completed": True})
+@router.post("/injectdata/fss")
+async def inject_fss(request: Request, db: Session = Depends(get_db)):
+    body: Any = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    _store_injection(db, "fss", body)
+    return _empty_ok()
 
 
-@router.post("/get_ppa_status")
-def get_ppa_status():
-    return JSONResponse({"completed": True, "withError": False})
+@router.post("/injectdata/wisp")
+async def inject_wisp(request: Request, db: Session = Depends(get_db)):
+    body: Any = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    _store_injection(db, "wisp", body)
+    return _empty_ok()
+
+
+@router.post("/injectdata/pal_database_record")
+async def inject_pal_database_record(request: Request, db: Session = Depends(get_db)):
+    body: Any = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    _store_injection(db, "pal", body)
+    return _empty_ok()
 
 
 @router.post("/injectdata/zone")
-async def inject_zone(request: Request):
+async def inject_zone(request: Request, db: Session = Depends(get_db)):
     body: dict[str, Any] = {}
     try:
         body = await request.json()
     except Exception:
         pass
     record = body.get("record") or {}
-    return JSONResponse(record.get("id") or "zone/ppa/mvp/0")
+    zone_id = record.get("id") or "zone/ppa/mvp/0"
+    _store_injection(db, "zone", body)
+    return JSONResponse(zone_id)
+
+
+@router.post("/trigger/daily_activities_immediately")
+def trigger_daily_activities_immediately():
+    return _empty_ok()
+
+
+@router.post("/get_daily_activities_status")
+def get_daily_activities_status():
+    return JSONResponse({"completed": True})
+
+
+@router.post("/trigger/load_dpas")
+def trigger_load_dpas():
+    return _empty_ok()
+
+
+@router.post("/trigger/bulk_dpa_activation")
+async def trigger_bulk_dpa_activation(request: Request):
+    try:
+        await request.json()
+    except Exception:
+        pass
+    return _empty_ok()
+
+
+@router.post("/trigger/dpa_activation")
+async def trigger_dpa_activation(request: Request):
+    try:
+        await request.json()
+    except Exception:
+        pass
+    return _empty_ok()
+
+
+@router.post("/get_ppa_status")
+def get_ppa_status():
+    return JSONResponse({"completed": True, "withError": False})
 
 
 @router.post("/trigger/create_ppa")
