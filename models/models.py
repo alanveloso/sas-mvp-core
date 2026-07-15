@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 
@@ -70,6 +70,9 @@ class Cbsd(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+    grants: Mapped[list[Grant]] = relationship(
+        "Grant", back_populates="cbsd", cascade="all, delete-orphan"
+    )
 
 
 class Grant(Base):
@@ -77,13 +80,18 @@ class Grant(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     grant_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    cbsd_pk: Mapped[int] = mapped_column(ForeignKey("cbsds.id"), index=True)
     cbsd_id: Mapped[str] = mapped_column(String(256), index=True)
     channel_type: Mapped[str] = mapped_column(String(16), default="GAA")
+    low_frequency: Mapped[int] = mapped_column(Integer, default=0)
+    high_frequency: Mapped[int] = mapped_column(Integer, default=0)
+    max_eirp: Mapped[float | None] = mapped_column(Float, nullable=True)
     grant_expire_time: Mapped[datetime] = mapped_column(DateTime)
     heartbeat_interval: Mapped[int] = mapped_column(Integer, default=60)
     transmit_expire_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     terminated: Mapped[bool] = mapped_column(Boolean, default=False)
     grant_json: Mapped[str] = mapped_column(Text, default="{}")
+    cbsd: Mapped[Cbsd] = relationship("Cbsd", back_populates="grants")
 
 
 class AdminInjectedData(Base):

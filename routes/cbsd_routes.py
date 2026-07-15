@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -13,8 +11,10 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.models import Cbsd, Grant
+from schemas.grant import GrantBatchRequest
 from schemas.registration import RegistrationBatchRequest
 from schemas.spectrum_inquiry import SpectrumInquiryBatchRequest
+from services.grant_service import process_grant
 from services.registration_service import process_registration
 from services.spectrum_inquiry_service import process_spectrum_inquiry
 
@@ -28,43 +28,8 @@ def registration(body: RegistrationBatchRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/grant")
-async def grant(body: dict[str, Any], db: Session = Depends(get_db)):
-    """Minimal Grant for REG_2 / REG_4 re-registration flows."""
-    responses = []
-    for req in body.get("grantRequest") or []:
-        cbsd_id = req.get("cbsdId")
-        if not cbsd_id:
-            responses.append({"response": {"responseCode": 102}})
-            continue
-        cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
-        if not cbsd:
-            responses.append(
-                {"cbsdId": cbsd_id, "response": {"responseCode": 103}}
-            )
-            continue
-        grant_id = f"grant/{uuid.uuid4().hex}"
-        expire = datetime.utcnow() + timedelta(days=7)
-        db.add(
-            Grant(
-                grant_id=grant_id,
-                cbsd_id=cbsd_id,
-                channel_type="GAA",
-                grant_expire_time=expire,
-                heartbeat_interval=60,
-                grant_json=json.dumps(req),
-            )
-        )
-        responses.append(
-            {
-                "cbsdId": cbsd_id,
-                "grantId": grant_id,
-                "grantExpireTime": expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "heartbeatInterval": 60,
-                "channelType": "GAA",
-                "response": {"responseCode": 0},
-            }
-        )
-    db.commit()
+def grant(body: GrantBatchRequest, db: Session = Depends(get_db)):
+    responses = process_grant(db, body.grantRequest)
     return JSONResponse({"grantResponse": responses})
 
 

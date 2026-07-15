@@ -169,6 +169,16 @@ async def inject_zone(request: Request, db: Session = Depends(get_db)):
     return JSONResponse(zone_id)
 
 
+@router.post("/injectdata/peer_sas")
+async def inject_peer_sas(request: Request):
+    """Stub: harness InjectPeerSas (GRA / IPR / FAD)."""
+    try:
+        await request.json()
+    except Exception:
+        pass
+    return _empty_ok()
+
+
 @router.post("/trigger/daily_activities_immediately")
 def trigger_daily_activities_immediately():
     return _empty_ok()
