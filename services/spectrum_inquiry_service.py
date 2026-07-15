@@ -323,6 +323,15 @@ def _validate_inquired(
 def process_spectrum_inquiry(
     db: Session, requests: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
+    from services.meas_report import (
+        FLAG_MEAS_REG,
+        MEAS_WITHOUT_GRANT,
+        admin_flag_set,
+        cbsd_meas_capabilities,
+        validate_meas_report,
+    )
+
+    ask_meas = admin_flag_set(db, FLAG_MEAS_REG)
     responses: list[dict[str, Any]] = []
     for req in requests:
         cbsd_id = req.get("cbsdId")
@@ -344,6 +353,20 @@ def process_spectrum_inquiry(
                 }
             )
             continue
+
+        caps = cbsd_meas_capabilities(cbsd.registration_json)
+        if ask_meas and MEAS_WITHOUT_GRANT in caps:
+            meas_err = validate_meas_report(
+                req.get("measReport"), require_full_cbrs=True
+            )
+            if meas_err is not None:
+                responses.append(
+                    {
+                        "cbsdId": cbsd_id,
+                        "response": {"responseCode": meas_err},
+                    }
+                )
+                continue
 
         err, inquired = _validate_inquired(req.get("inquiredSpectrum"))
         if err is not None:

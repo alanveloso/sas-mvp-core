@@ -89,6 +89,8 @@ class Grant(Base):
     grant_expire_time: Mapped[datetime] = mapped_column(DateTime)
     heartbeat_interval: Mapped[int] = mapped_column(Integer, default=60)
     transmit_expire_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    authorized: Mapped[bool] = mapped_column(Boolean, default=False)
+    meas_report_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     terminated: Mapped[bool] = mapped_column(Boolean, default=False)
     grant_json: Mapped[str] = mapped_column(Text, default="{}")
     cbsd: Mapped[Cbsd] = relationship("Cbsd", back_populates="grants")

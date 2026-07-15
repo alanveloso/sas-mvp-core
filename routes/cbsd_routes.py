@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -12,9 +11,11 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.models import Cbsd, Grant
 from schemas.grant import GrantBatchRequest
+from schemas.heartbeat import HeartbeatBatchRequest
 from schemas.registration import RegistrationBatchRequest
 from schemas.spectrum_inquiry import SpectrumInquiryBatchRequest
 from services.grant_service import process_grant
+from services.heartbeat_service import process_heartbeat
 from services.registration_service import process_registration
 from services.spectrum_inquiry_service import process_spectrum_inquiry
 
@@ -34,45 +35,8 @@ def grant(body: GrantBatchRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/heartbeat")
-async def heartbeat(body: dict[str, Any], db: Session = Depends(get_db)):
-    """Minimal Heartbeat for REG_2 / REG_4 re-registration flows."""
-    responses = []
-    for req in body.get("heartbeatRequest") or []:
-        cbsd_id = req.get("cbsdId")
-        grant_id = req.get("grantId")
-        grant = (
-            db.query(Grant)
-            .filter_by(grant_id=grant_id, cbsd_id=cbsd_id)
-            .first()
-        )
-        if not grant or grant.terminated:
-            # After re-registration grants are terminated → 103 with past transmitExpireTime
-            past = datetime.utcnow() - timedelta(seconds=1)
-            responses.append(
-                {
-                    "cbsdId": cbsd_id,
-                    "grantId": grant_id,
-                    "transmitExpireTime": past.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "response": {"responseCode": 103},
-                }
-            )
-            continue
-        # Keep short so REG_4 re-registration wait stays fast; HBT suite will refine later.
-        tx_expire = datetime.utcnow().replace(microsecond=0) + timedelta(seconds=15)
-        grant.transmit_expire_time = tx_expire
-        responses.append(
-            {
-                "cbsdId": cbsd_id,
-                "grantId": grant_id,
-                "transmitExpireTime": tx_expire.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "grantExpireTime": grant.grant_expire_time.strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                ),
-                "heartbeatInterval": grant.heartbeat_interval,
-                "response": {"responseCode": 0},
-            }
-        )
-    db.commit()
+def heartbeat(body: HeartbeatBatchRequest, db: Session = Depends(get_db)):
+    responses = process_heartbeat(db, body.heartbeatRequest)
     return JSONResponse({"heartbeatResponse": responses})
 
 

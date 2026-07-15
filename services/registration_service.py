@@ -362,5 +362,20 @@ def process_registration(
             }
         )
 
+    # MES_1: when triggered, ask for WITHOUT_GRANT measurement reports.
+    from services.meas_report import (
+        FLAG_MEAS_REG,
+        MEAS_WITHOUT_GRANT,
+        admin_flag_set,
+    )
+
+    if admin_flag_set(db, FLAG_MEAS_REG):
+        for raw, resp in zip(registration_requests, responses):
+            if resp.get("response", {}).get("responseCode") != SUCCESS:
+                continue
+            meas = raw.get("measCapability") or []
+            if MEAS_WITHOUT_GRANT in meas:
+                resp["measReportConfig"] = [MEAS_WITHOUT_GRANT]
+
     db.commit()
     return responses

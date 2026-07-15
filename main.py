@@ -8,6 +8,7 @@ Usage (from sas_mvp_core/):
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Allow `python main.py` and `uvicorn main:app` from sas_mvp_core/
@@ -46,6 +47,26 @@ async def registration_unsupported_version(version: str, request: Request):
     requests = body.get("registrationRequest") or []
     responses = [{"response": {"responseCode": 100}} for _ in requests]
     return JSONResponse({"registrationResponse": responses})
+
+
+@app.post("/{version}/heartbeat")
+async def heartbeat_unsupported_version(version: str, request: Request):
+    """HBT_3: unsupported CBSD-SAS protocol version → responseCode 100."""
+    if version == "v1.2":
+        return JSONResponse({"detail": "Use /v1.2/heartbeat"}, status_code=500)
+    body = await request.json()
+    past_s = (datetime.utcnow() - timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    responses = []
+    for req in body.get("heartbeatRequest") or []:
+        responses.append(
+            {
+                "cbsdId": req.get("cbsdId"),
+                "grantId": req.get("grantId"),
+                "transmitExpireTime": past_s,
+                "response": {"responseCode": 100},
+            }
+        )
+    return JSONResponse({"heartbeatResponse": responses})
 
 
 def main():

@@ -26,13 +26,19 @@ cd src/harness && python3 -m unittest testcases.WINNF_FT_S_SIQ_testcase -v
 
 # Grant
 cd src/harness && python3 -m unittest testcases.WINNF_FT_S_GRA_testcase -v
+
+# Heartbeat
+cd src/harness && python3 -m unittest testcases.WINNF_FT_S_HBT_testcase -v
+
+# Measurement Report
+cd src/harness && python3 -m unittest testcases.WINNF_FT_S_MES_testcase -v
 ```
 
 ---
 
 ## Limitações: o que está fora do MVP
 
-O MVP implementa o fluxo CBSD→SAS (Registration, Spectrum Inquiry, Grant) com regras simuladas e stubs admin. Alguns testes WINNF exigem capacidades de certificação completa que **ainda não fazem parte deste MVP**.
+O MVP implementa o fluxo CBSD→SAS (Registration, Spectrum Inquiry, Grant, Heartbeat) com regras simuladas e stubs admin. Alguns testes WINNF exigem capacidades de certificação completa que **ainda não fazem parte deste MVP**.
 
 ### 1. Binding certificado cliente ↔ CBSD (mTLS de negócio)
 
@@ -62,32 +68,32 @@ Para habilitar isso depois: configurar o Uvicorn/FastAPI com CA do harness, exig
 
 | Item | Detalhe |
 |------|---------|
-| **Testes afetados** | `GRA_1` (`sleep(240)` + heartbeat `501 SUSPENDED_GRANT` ou grant `400`) |
-| **O que o teste espera** | Após `TriggerDpaActivation`, o grant PAL fica suspenso no heartbeat (`501`) ou já é recusado no grant (`400`) |
-| **O que falta** | Estado de DPA ativo por faixa, vínculo com grants PAL e lógica de Heartbeat `501` / Grant `400` |
-| **Estado atual** | Triggers DPA são stubs 200; Heartbeat MVP ainda não implementa `501` por DPA (fase Heartbeat refinará isso) |
+| **Testes afetados** | `GRA_1` (sleep 240s + regras PAL avançadas); `HBT_12` cobre suspensão básica |
+| **O que o teste espera** | Após `TriggerDpaActivation`, o grant fica suspenso no heartbeat (`501`) ou é recusado no grant (`400`) |
+| **Estado atual** | `HBT_12`: DPA ativa é persistida e Heartbeat retorna `501`. Graçãos PAL com IAP completo / `GRA_1` podem exigir mais fidelidade |
 
 ### 4. Outros itens tipicamente fora do MVP mínimo
 
 | Capacidade | Usado por | Nota |
 |------------|-----------|------|
 | SAS↔SAS dump (`/v1.3/dump`, ESC sensor) | FAD, SSS, MCP | Fora do fluxo CBSD→SAS do MVP |
-| Modelos de propagação / IAP / proteção real FSS/DPA | FPR, GPR, IPR, PPR | SIQ/GRA usam regras geométricas simplificadas (injeção admin + polígono) |
+| Modelos de propagação / IAP / proteção real FSS/DPA | FPR, GPR, IPR, PPR | SIQ/GRA/HBT usam regras geométricas/frequência simplificadas |
 | Blacklist por FCC ID + serial | Interface admin (pouco usada) | Só blacklist por `fccId` está no MVP |
-| Medições (measReport) forçadas no response | MES | Triggers admin existem como stub; payload ainda não enriquecido |
 
 ---
 
-## O que a fase Grant *já* cobre no MVP
+## O que a fase Heartbeat *já* cobre no MVP
 
-Com a implementação atual de `POST /v1.2/grant`, em geral passam cenários como:
+Com `POST /v1.2/heartbeat` + triggers MES:
 
-- Parâmetros faltando → `102`
-- CBSD inexistente → `103` (sem ecoar `cbsdId`)
-- Frequência inválida / fora do CBRS → `103` / `300`
-- Mix PAL+GAA, EIRP acima do permitido, blacklist → `103` / `101`
-- CBSD dentro de PPA sem estar no cluster → `400`
-- Conflito de grant (mesmo CBSD / mesma faixa) → `401`
-- Sucesso: `grantId`, `grantExpireTime`, `heartbeatInterval`, `channelType` (`PAL`\|`GAA`), **sem** `operationParam`
-
-Referência rápida dos códigos WINNF usados: `0`, `101`, `102`, `103`, `300`, `400`, `401` (e `500`/`501` quando heartbeat/peer estiverem completos).
+- Sucesso `GRANTED` → `AUTHORIZED`, `transmitExpireTime` futuro e ≤ 240 s
+- `grantRenew` estende `grantExpireTime`
+- Parâmetros faltando → `102` (tx no passado)
+- `grantId` inválido → `103` (sem ecoar `grantId`)
+- Blacklist → `101`
+- Grant terminado / expirado → `103`/`500`
+- Estado dessincronizado (`AUTHORIZED` sem HB prévio) → `502`
+- Conflito com FSS/WISP injetados → `500`
+- DPA ativa na faixa do grant → `501`
+- Versão de protocolo sem suporte → `100`
+- MES: `measReportConfig` + validação de `measReport` em Registration/SIQ/Grant/Heartbeat

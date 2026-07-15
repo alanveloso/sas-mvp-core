@@ -28,7 +28,8 @@ INTERFERENCE = 400
 GRANT_CONFLICT = 401
 
 HEARTBEAT_INTERVAL_SEC = 60
-DEFAULT_GRANT_DAYS = 7
+# Long enough for HBT.12 (sleep 240s + optional 300s) yet < 24h for HBT.6.
+DEFAULT_GRANT_DURATION_SEC = 900
 CAT_A_MAX_EIRP_10MHZ = 30.0
 CAT_B_MAX_EIRP_10MHZ = 47.0
 
@@ -202,7 +203,7 @@ def _resolve_channel(
 
 
 def _grant_expire_time(pal_license_exp: datetime | None) -> datetime:
-    default = datetime.utcnow() + timedelta(days=DEFAULT_GRANT_DAYS)
+    default = datetime.utcnow() + timedelta(seconds=DEFAULT_GRANT_DURATION_SEC)
     if pal_license_exp is None:
         return default
     # Must be ≤ PAL licenseExpiration (GRA.13).
@@ -210,6 +211,15 @@ def _grant_expire_time(pal_license_exp: datetime | None) -> datetime:
 
 
 def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from services.meas_report import (
+        FLAG_MEAS_REG,
+        MEAS_WITHOUT_GRANT,
+        admin_flag_set,
+        cbsd_meas_capabilities,
+        validate_meas_report,
+    )
+
+    ask_meas = admin_flag_set(db, FLAG_MEAS_REG)
     responses: list[dict[str, Any]] = []
     # Frequencies approved earlier in this same batch (conflict within batch).
     pending_by_cbsd: dict[str, list[tuple[int, int]]] = {}
@@ -229,6 +239,15 @@ def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str,
         if db.query(BlacklistedFccId).filter_by(fcc_id=cbsd.fcc_id).first():
             responses.append(_resp(BLACKLISTED, cbsd_id=cbsd_id))
             continue
+
+        caps = cbsd_meas_capabilities(cbsd.registration_json)
+        if ask_meas and MEAS_WITHOUT_GRANT in caps:
+            meas_err = validate_meas_report(
+                req.get("measReport"), require_full_cbrs=True
+            )
+            if meas_err is not None:
+                responses.append(_resp(meas_err, cbsd_id=cbsd_id))
+                continue
 
         op = req.get("operationParam")
         if not isinstance(op, dict):

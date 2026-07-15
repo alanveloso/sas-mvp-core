@@ -123,6 +123,22 @@ def blacklist_fcc_id(body: BlacklistFccIdRequest, db: Session = Depends(get_db))
     return _empty_ok()
 
 
+@router.post("/trigger/meas_report_in_registration_response")
+def trigger_meas_report_in_registration(db: Session = Depends(get_db)):
+    from services.meas_report import FLAG_MEAS_REG, set_admin_flag
+
+    set_admin_flag(db, FLAG_MEAS_REG)
+    return _empty_ok()
+
+
+@router.post("/trigger/meas_report_in_heartbeat_response")
+def trigger_meas_report_in_heartbeat(db: Session = Depends(get_db)):
+    from services.meas_report import FLAG_MEAS_HBT, set_admin_flag
+
+    set_admin_flag(db, FLAG_MEAS_HBT)
+    return _empty_ok()
+
+
 @router.post("/injectdata/fss")
 async def inject_fss(request: Request, db: Session = Depends(get_db)):
     body: Any = {}
@@ -194,21 +210,31 @@ def trigger_load_dpas():
     return _empty_ok()
 
 
-@router.post("/trigger/bulk_dpa_activation")
-async def trigger_bulk_dpa_activation(request: Request):
+@router.post("/trigger/dpa_activation")
+async def trigger_dpa_activation(request: Request, db: Session = Depends(get_db)):
+    from services.meas_report import FLAG_DPA_ACTIVE, set_admin_flag
+
+    body: dict[str, Any] = {}
     try:
-        await request.json()
+        body = await request.json()
     except Exception:
         pass
+    set_admin_flag(db, FLAG_DPA_ACTIVE, body if isinstance(body, dict) else {})
     return _empty_ok()
 
 
-@router.post("/trigger/dpa_activation")
-async def trigger_dpa_activation(request: Request):
+@router.post("/trigger/bulk_dpa_activation")
+async def trigger_bulk_dpa_activation(request: Request, db: Session = Depends(get_db)):
+    from services.meas_report import FLAG_DPA_ACTIVE, clear_admin_flags
+
+    body: dict[str, Any] = {}
     try:
-        await request.json()
+        body = await request.json()
     except Exception:
         pass
+    # Deactivate clears stored DPA activations (HBT.12 / GRA prep).
+    if isinstance(body, dict) and body.get("activate") is False:
+        clear_admin_flags(db, FLAG_DPA_ACTIVE)
     return _empty_ok()
 
 
