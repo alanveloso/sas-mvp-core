@@ -22,12 +22,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from database import init_db
 from routes.admin_routes import router as admin_router
 from routes.cbsd_routes import router as cbsd_router
 from routes.sas_sas_routes import router as sas_sas_router
+from services.error_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
 from services.mtls_auth import (
     ECC_CIPHERS,
     RSA_CIPHERS,
@@ -50,6 +56,8 @@ ECC_PORT = 9001
 patch_uvicorn_for_client_cert()
 
 app = FastAPI(title="SAS MVP Core", version="0.1.0")
+app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.include_router(admin_router)
 app.include_router(cbsd_router)
 app.include_router(sas_sas_router)

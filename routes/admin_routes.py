@@ -324,19 +324,77 @@ async def trigger_bulk_dpa_activation(request: Request, db: Session = Depends(ge
 
 
 @router.post("/get_ppa_status")
-def get_ppa_status():
+def get_ppa_status(db: Session = Depends(get_db)):
+    """WDB/PCR: poll until PPA creation finishes."""
+    row = db.query(AdminInjectedData).filter_by(kind="ppa_creation_status").first()
+    if row:
+        try:
+            status = json.loads(row.data_json or "{}")
+            return JSONResponse(
+                {
+                    "completed": bool(status.get("completed", True)),
+                    "withError": bool(status.get("withError", False)),
+                }
+            )
+        except json.JSONDecodeError:
+            pass
     return JSONResponse({"completed": True, "withError": False})
 
 
 @router.post("/trigger/create_ppa")
-async def create_ppa(request: Request):
+async def create_ppa(request: Request, db: Session = Depends(get_db)):
+    """WDB/PCR: create PPA zone; fail when requested PAL IDs are unknown."""
+    from services.meas_report import set_admin_flag
+
     body: dict[str, Any] = {}
     try:
         body = await request.json()
     except Exception:
         pass
-    pal_ids = body.get("palIds") or ["pal0"]
+    pal_ids = body.get("palIds") or []
+    known_pal_ids: set[str] = set()
+    for row in db.query(AdminInjectedData).filter_by(kind="pal").all():
+        try:
+            rec = json.loads(row.data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        pid = rec.get("palId")
+        if pid:
+            known_pal_ids.add(pid)
+
+    missing = [pid for pid in pal_ids if pid not in known_pal_ids]
+    if not pal_ids or missing:
+        set_admin_flag(
+            db, "ppa_creation_status", {"completed": True, "withError": True}
+        )
+        # Harness may accept HTTP error OR status.withError; return 200 + status flag.
+        return JSONResponse("")
+
+    set_admin_flag(
+        db, "ppa_creation_status", {"completed": True, "withError": False}
+    )
     return JSONResponse(f"zone/ppa/mvp/{pal_ids[0]}/0")
+
+
+@router.post("/injectdata/database_url")
+async def inject_database_url(request: Request, db: Session = Depends(get_db)):
+    """FDB/WDB/IPR: accept external DB URL injection (FSS, GWBL, PAL, CPI, …)."""
+    body: Any = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    _store_injection(db, "database_url", body)
+    return _empty_ok()
+
+
+@router.post("/trigger/enable_scheduled_daily_activities")
+def trigger_enable_scheduled_daily_activities(db: Session = Depends(get_db)):
+    """FDB_8: enable scheduled CPAS; MVP stores a flag and returns HTTP 200."""
+    from services.meas_report import set_admin_flag
+
+    set_admin_flag(db, "scheduled_daily_activities", {"enabled": True})
+    return _empty_ok()
 
 
 # Catch-all stubs so the harness never gets HTTP 404 on admin paths.

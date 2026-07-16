@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.error_handlers import MAXIMUM_BATCH_SIZE
+
 
 class ResponseObject(BaseModel):
     responseCode: int
@@ -30,7 +32,9 @@ class RegistrationRequestItem(BaseModel):
 
 
 class RegistrationBatchRequest(BaseModel):
-    registrationRequest: list[dict[str, Any]] = Field(default_factory=list)
+    registrationRequest: list[dict[str, Any]] = Field(
+        ..., max_length=MAXIMUM_BATCH_SIZE
+    )
 
 
 class RegistrationResponseItem(BaseModel):

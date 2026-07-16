@@ -291,6 +291,23 @@ def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str,
                 responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
                 continue
 
+            # FDB.6: FSS with neighboring GWBL within 150 km → 400 on 3650–3700 MHz.
+            from services.federal_db_service import grant_blocked_by_fss_gwbl
+
+            if grant_blocked_by_fss_gwbl(db, lat, lon, low, high):
+                responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                continue
+
+        # BPR: Canadian Border Sharing Zone PFD > -80 dBm/m²/MHz → 400.
+        reg = _cbsd_reg(cbsd)
+        installation = reg.get("installationParam") or {}
+        if installation:
+            from services.border_protection import violates_canadian_border_pfd
+
+            if violates_canadian_border_pfd(installation, max_eirp, low, high):
+                responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                continue
+
         existing = _active_grants(db, cbsd_id)
         pending = pending_by_cbsd.get(cbsd_id, [])
         if _has_freq_conflict(existing, low, high, also_pending=pending):
@@ -306,6 +323,14 @@ def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str,
 
         grant_id = f"grant/{uuid.uuid4().hex}"
         expire = _grant_expire_time(pal_exp)
+        from services.federal_db_service import grant_sync_stamp
+
+        stamp = grant_sync_stamp(db)
+        grant_payload = dict(req) if isinstance(req, dict) else {}
+        grant_payload["fss_gen"] = stamp.get("fss", 0)
+        grant_payload["gwbl_gen"] = stamp.get("gwbl", 0)
+        grant_payload["exz_gen"] = stamp.get("exz", 0)
+        grant_payload["dpa_gen"] = stamp.get("dpa", 0)
         db.add(
             Grant(
                 grant_id=grant_id,
@@ -317,7 +342,7 @@ def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str,
                 max_eirp=max_eirp,
                 grant_expire_time=expire,
                 heartbeat_interval=HEARTBEAT_INTERVAL_SEC,
-                grant_json=json.dumps(req),
+                grant_json=json.dumps(grant_payload),
             )
         )
         pending_by_cbsd.setdefault(cbsd_id, []).append((low, high))

@@ -19,7 +19,6 @@ from services.meas_report import (
     validate_meas_report,
 )
 from services.spectrum_inquiry_service import (
-    _fss_location_and_freq,
     _load_injected,
     _overlaps,
     _wisp_freq,
@@ -81,23 +80,11 @@ def _base(
     return out
 
 
-def _grant_overlaps_incumbent(db: Session, grant: Grant) -> bool:
-    """True when grant frequency overlaps injected FSS or WISP (post-CPAS simulation)."""
+def _grant_overlaps_wisp(db: Session, grant: Grant) -> bool:
+    """True when grant frequency overlaps an injected WISP (post-CPAS simulation)."""
     for wisp in _load_injected(db, "wisp"):
         freq = _wisp_freq(wisp)
         if freq and _overlaps(grant.low_frequency, grant.high_frequency, freq[0], freq[1]):
-            return True
-    for fss in _load_injected(db, "fss"):
-        info = _fss_location_and_freq(fss)
-        if not info:
-            continue
-        _, _, low, high = info
-        if _overlaps(grant.low_frequency, grant.high_frequency, low, high):
-            return True
-        # FCC Part 96: FSS protection often extends above 3650 MHz within CBRS.
-        if low >= 3_650_000_000 and _overlaps(
-            grant.low_frequency, grant.high_frequency, 3_650_000_000, 3_700_000_000
-        ):
             return True
     return False
 
@@ -199,10 +186,32 @@ def process_heartbeat(
             )
             continue
 
-        if _grant_overlaps_incumbent(db, grant):
+        if _grant_overlaps_wisp(db, grant):
             grant.terminated = True
             responses.append(
                 _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
+            )
+            continue
+
+        # Federal DB (EXZ / FSS / GWBL / DPA) — 500 for stale grants, 501 for current.
+        from services.federal_db_service import heartbeat_federal_code
+
+        federal_code = heartbeat_federal_code(db, cbsd, grant)
+        if federal_code == TERMINATED_GRANT:
+            grant.terminated = True
+            responses.append(
+                _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
+            )
+            continue
+        if federal_code == SUSPENDED_GRANT:
+            responses.append(
+                _base(
+                    SUSPENDED_GRANT,
+                    cbsd_id=cbsd_id,
+                    grant_id=grant_id,
+                    grant_expire=grant.grant_expire_time,
+                    heartbeat_interval=grant.heartbeat_interval or HEARTBEAT_INTERVAL_SEC,
+                )
             )
             continue
 

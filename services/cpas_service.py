@@ -62,6 +62,9 @@ def trigger_daily_activities(db: Session) -> None:
 def _run_cpas_worker() -> None:
     db = SessionLocal()
     try:
+        from services.database_sync_service import sync_injected_database_urls
+
+        sync_injected_database_urls(db)
         run_peer_fad_sync(db)
         apply_peer_conflict_to_local_grants(db)
     except Exception:

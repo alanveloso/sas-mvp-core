@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.error_handlers import MAXIMUM_BATCH_SIZE
+
 
 class HeartbeatRequestItem(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -18,7 +20,9 @@ class HeartbeatRequestItem(BaseModel):
 
 
 class HeartbeatBatchRequest(BaseModel):
-    heartbeatRequest: list[dict[str, Any]] = Field(default_factory=list)
+    heartbeatRequest: list[dict[str, Any]] = Field(
+        ..., max_length=MAXIMUM_BATCH_SIZE
+    )
 
 
 class HeartbeatResponseItem(BaseModel):

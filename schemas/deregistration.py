@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.error_handlers import MAXIMUM_BATCH_SIZE
+
 
 class DeregistrationRequestItem(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -14,7 +16,9 @@ class DeregistrationRequestItem(BaseModel):
 
 
 class DeregistrationBatchRequest(BaseModel):
-    deregistrationRequest: list[dict[str, Any]] = Field(default_factory=list)
+    deregistrationRequest: list[dict[str, Any]] = Field(
+        ..., max_length=MAXIMUM_BATCH_SIZE
+    )
 
 
 class DeregistrationResponseItem(BaseModel):

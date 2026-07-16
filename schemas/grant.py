@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.error_handlers import MAXIMUM_BATCH_SIZE
+
 
 class FrequencyRange(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -30,7 +32,7 @@ class GrantRequestItem(BaseModel):
 
 
 class GrantBatchRequest(BaseModel):
-    grantRequest: list[dict[str, Any]] = Field(default_factory=list)
+    grantRequest: list[dict[str, Any]] = Field(..., max_length=MAXIMUM_BATCH_SIZE)
 
 
 class GrantResponseItem(BaseModel):

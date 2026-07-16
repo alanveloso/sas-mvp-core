@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.error_handlers import MAXIMUM_BATCH_SIZE
+
 
 class RelinquishmentRequestItem(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -15,7 +17,9 @@ class RelinquishmentRequestItem(BaseModel):
 
 
 class RelinquishmentBatchRequest(BaseModel):
-    relinquishmentRequest: list[dict[str, Any]] = Field(default_factory=list)
+    relinquishmentRequest: list[dict[str, Any]] = Field(
+        ..., max_length=MAXIMUM_BATCH_SIZE
+    )
 
 
 class RelinquishmentResponseItem(BaseModel):
