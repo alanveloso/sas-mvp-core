@@ -15,7 +15,9 @@ from models.models import (
     BlacklistedFccId,
     ConditionalRegistration,
     CpiUser,
+    EscSensor,
     FccIdRecord,
+    PeerSas,
     UserIdRecord,
 )
 from schemas.admin import (
@@ -24,6 +26,11 @@ from schemas.admin import (
     InjectCpiUserRequest,
     InjectFccIdRequest,
     InjectUserIdRequest,
+)
+from services.fad_service import (
+    create_full_activity_dump,
+    rewrite_esc_sensor_id,
+    rewrite_zone_id,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -180,18 +187,66 @@ async def inject_zone(request: Request, db: Session = Depends(get_db)):
     except Exception:
         pass
     record = body.get("record") or {}
-    zone_id = record.get("id") or "zone/ppa/mvp/0"
+    if isinstance(record, dict):
+        zone_id = rewrite_zone_id(record.get("id"))
+        record = dict(record)
+        record["id"] = zone_id
+        body = dict(body)
+        body["record"] = record
+    else:
+        zone_id = rewrite_zone_id(None)
     _store_injection(db, "zone", body)
     return JSONResponse(zone_id)
 
 
 @router.post("/injectdata/peer_sas")
-async def inject_peer_sas(request: Request):
-    """Stub: harness InjectPeerSas (GRA / IPR / FAD)."""
+async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
+    """Persist peer SAS certificateHash + url for SAS↔SAS authorization."""
+    body: dict[str, Any] = {}
     try:
-        await request.json()
+        body = await request.json()
     except Exception:
         pass
+    cert_hash = (body.get("certificateHash") or "").strip()
+    url = (body.get("url") or "").strip()
+    if cert_hash:
+        existing = db.query(PeerSas).filter_by(certificate_hash=cert_hash).first()
+        if existing:
+            existing.url = url
+        else:
+            db.add(PeerSas(certificate_hash=cert_hash, url=url))
+        db.commit()
+    return _empty_ok()
+
+
+@router.post("/injectdata/esc_sensor")
+async def inject_esc_sensor(request: Request, db: Session = Depends(get_db)):
+    """Persist EscSensorRecord for inclusion in Full Activity Dump."""
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    record = body.get("record") or body
+    if not isinstance(record, dict):
+        return _empty_ok()
+    record = dict(record)
+    record_id = rewrite_esc_sensor_id(record.get("id"))
+    record["id"] = record_id
+    existing = db.query(EscSensor).filter_by(record_id=record_id).first()
+    payload = json.dumps(record)
+    if existing:
+        existing.data_json = payload
+    else:
+        db.add(EscSensor(record_id=record_id, data_json=payload))
+    db.commit()
+    return _empty_ok()
+
+
+@router.post("/trigger/create_full_activity_dump")
+def trigger_create_full_activity_dump(db: Session = Depends(get_db)):
+    """Generate FullActivityDump manifesto + activity dump files."""
+    create_full_activity_dump(db)
     return _empty_ok()
 
 

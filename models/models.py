@@ -104,3 +104,54 @@ class AdminInjectedData(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     kind: Mapped[str] = mapped_column(String(32), index=True)  # fss|wisp|pal|zone
     data_json: Mapped[str] = mapped_column(Text)
+
+
+class PeerSas(Base):
+    """Peer SAS authorized for SAS↔SAS (FAD) access."""
+
+    __tablename__ = "peer_sas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    certificate_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    url: Mapped[str] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class EscSensor(Base):
+    """ESC sensor records injected via admin API for FAD export."""
+
+    __tablename__ = "esc_sensors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    record_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    data_json: Mapped[str] = mapped_column(Text)
+
+
+class FadDump(Base):
+    """Local Full Activity Dump generation (UUT as SAS↔SAS server)."""
+
+    __tablename__ = "fad_dumps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    generation_datetime: Mapped[str] = mapped_column(String(32), index=True)
+    description: Mapped[str] = mapped_column(String(256), default="Full activity dump files")
+    manifest_json: Mapped[str] = mapped_column(Text, default="{}")
+    ready: Mapped[bool] = mapped_column(Boolean, default=False)
+    files: Mapped[list[FadFile]] = relationship(
+        "FadFile", back_populates="dump", cascade="all, delete-orphan"
+    )
+
+
+class FadFile(Base):
+    """Activity dump file content belonging to a FadDump."""
+
+    __tablename__ = "fad_files"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    dump_id: Mapped[int] = mapped_column(ForeignKey("fad_dumps.id"), index=True)
+    record_type: Mapped[str] = mapped_column(String(32), index=True)
+    url_path: Mapped[str] = mapped_column(String(512), index=True)
+    checksum: Mapped[str] = mapped_column(String(40))
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    content_json: Mapped[str] = mapped_column(Text)
+    dump: Mapped[FadDump] = relationship("FadDump", back_populates="files")

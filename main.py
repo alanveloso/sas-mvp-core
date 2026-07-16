@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from database import init_db
 from routes.admin_routes import router as admin_router
 from routes.cbsd_routes import router as cbsd_router
+from routes.sas_sas_routes import router as sas_sas_router
 
 HARNESS_CERTS = ROOT.parent / "src" / "harness" / "certs"
 SSL_CERTFILE = HARNESS_CERTS / "server.cert"
@@ -30,6 +31,7 @@ SSL_KEYFILE = HARNESS_CERTS / "server.key"
 app = FastAPI(title="SAS MVP Core", version="0.1.0")
 app.include_router(admin_router)
 app.include_router(cbsd_router)
+app.include_router(sas_sas_router)
 
 
 @app.on_event("startup")
