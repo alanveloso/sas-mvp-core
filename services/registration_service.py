@@ -298,7 +298,10 @@ def _terminate_grants(db: Session, cbsd_id: str) -> None:
 
 
 def process_registration(
-    db: Session, registration_requests: list[dict[str, Any]]
+    db: Session,
+    registration_requests: list[dict[str, Any]],
+    *,
+    certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
     responses: list[dict[str, Any]] = []
 
@@ -350,6 +353,8 @@ def process_registration(
             existing.user_id = request["userId"]
             existing.cbsd_category = merged.get("cbsdCategory")
             existing.registration_json = json.dumps(merged)
+            if certificate_hash is not None:
+                existing.certificate_hash = certificate_hash
             _terminate_grants(db, cbsd_id)
         else:
             db.add(
@@ -359,6 +364,7 @@ def process_registration(
                     user_id=request["userId"],
                     cbsd_serial_number=serial,
                     cbsd_category=merged.get("cbsdCategory"),
+                    certificate_hash=certificate_hash,
                     registration_json=json.dumps(merged),
                 )
             )

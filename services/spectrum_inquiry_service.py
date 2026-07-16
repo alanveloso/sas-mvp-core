@@ -286,8 +286,21 @@ def _validate_inquired(
     return None, inquired
 
 
+def _cert_mismatch(cbsd: Cbsd, certificate_hash: str | None) -> bool:
+    """True when the request cert does not belong to the CBSD that owns cbsdId."""
+    stored = cbsd.certificate_hash
+    if not stored:
+        return False
+    if not certificate_hash:
+        return True
+    return stored.upper() != certificate_hash.upper()
+
+
 def process_spectrum_inquiry(
-    db: Session, requests: list[dict[str, Any]]
+    db: Session,
+    requests: list[dict[str, Any]],
+    *,
+    certificate_hash: str | None = None,
 ) -> list[dict[str, Any]]:
     from services.meas_report import (
         FLAG_MEAS_REG,
@@ -308,6 +321,11 @@ def process_spectrum_inquiry(
         cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
         if not cbsd:
             # Non-existent / unknown cbsdId → 103 without echoing cbsdId (SIQ.6).
+            responses.append({"response": {"responseCode": INVALID_PARAM}})
+            continue
+
+        # Wrong client cert for this cbsdId → 103 without echoing cbsdId (SIQ.7).
+        if _cert_mismatch(cbsd, certificate_hash):
             responses.append({"response": {"responseCode": INVALID_PARAM}})
             continue
 

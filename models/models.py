@@ -65,6 +65,8 @@ class Cbsd(Base):
     user_id: Mapped[str] = mapped_column(String(256))
     cbsd_serial_number: Mapped[str] = mapped_column(String(128))
     cbsd_category: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # SHA-1 fingerprint of the registering client cert (``AA:BB:...``), for mTLS binding.
+    certificate_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     registration_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

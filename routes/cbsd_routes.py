@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from schemas.spectrum_inquiry import SpectrumInquiryBatchRequest
 from services.deregistration_service import process_deregistration
 from services.grant_service import process_grant
 from services.heartbeat_service import process_heartbeat
+from services.mtls_auth import load_client_certificate, sha1_fingerprint_colon
 from services.registration_service import process_registration
 from services.relinquishment_service import process_relinquishment
 from services.spectrum_inquiry_service import process_spectrum_inquiry
@@ -23,15 +24,32 @@ from services.spectrum_inquiry_service import process_spectrum_inquiry
 router = APIRouter(prefix="/v1.2", tags=["cbsd-sas"])
 
 
+def _client_cert_hash(request: Request) -> str | None:
+    cert = load_client_certificate(request)
+    if cert is None:
+        return None
+    return sha1_fingerprint_colon(cert)
+
+
 @router.post("/registration")
-def registration(body: RegistrationBatchRequest, db: Session = Depends(get_db)):
-    responses = process_registration(db, body.registrationRequest)
+def registration(
+    request: Request,
+    body: RegistrationBatchRequest,
+    db: Session = Depends(get_db),
+):
+    responses = process_registration(
+        db, body.registrationRequest, certificate_hash=_client_cert_hash(request)
+    )
     return JSONResponse({"registrationResponse": responses})
 
 
 @router.post("/grant")
-def grant(body: GrantBatchRequest, db: Session = Depends(get_db)):
-    responses = process_grant(db, body.grantRequest)
+def grant(
+    request: Request, body: GrantBatchRequest, db: Session = Depends(get_db)
+):
+    responses = process_grant(
+        db, body.grantRequest, certificate_hash=_client_cert_hash(request)
+    )
     return JSONResponse({"grantResponse": responses})
 
 
@@ -43,9 +61,15 @@ def heartbeat(body: HeartbeatBatchRequest, db: Session = Depends(get_db)):
 
 @router.post("/spectrumInquiry")
 def spectrum_inquiry(
-    body: SpectrumInquiryBatchRequest, db: Session = Depends(get_db)
+    request: Request,
+    body: SpectrumInquiryBatchRequest,
+    db: Session = Depends(get_db),
 ):
-    responses = process_spectrum_inquiry(db, body.spectrumInquiryRequest)
+    responses = process_spectrum_inquiry(
+        db,
+        body.spectrumInquiryRequest,
+        certificate_hash=_client_cert_hash(request),
+    )
     return JSONResponse({"spectrumInquiryResponse": responses})
 
 

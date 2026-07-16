@@ -224,19 +224,125 @@ def peer_has_grant_for_cbsd(db: Session, cbsd: Cbsd) -> bool:
     return False
 
 
+# FAD_2: peer ESC neighborhood used by the harness (~40 km).
+_ESC_PROTECTION_M = 40_000.0
+_ESC_LOW_HZ = 3_550_000_000
+_ESC_HIGH_HZ = 3_700_000_000
+
+
+def _peer_records_of_type(db: Session, record_type: str) -> list[dict[str, Any]]:
+    rows = db.query(PeerFadRecord).filter_by(record_type=record_type).all()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            data = json.loads(row.data_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out.append(data)
+    return out
+
+
+def _cbsd_lat_lon(cbsd: Cbsd) -> tuple[float | None, float | None]:
+    from services.spectrum_inquiry_service import _cbsd_location
+
+    return _cbsd_location(cbsd)
+
+
+def _freq_overlaps(a_low: int, a_high: int, b_low: int, b_high: int) -> bool:
+    return a_low < b_high and a_high > b_low
+
+
+def _ppa_protected_ranges(db: Session, ppa: dict[str, Any]) -> list[tuple[int, int]]:
+    """Resolve PPA-protected frequencies via linked local PAL records."""
+    from services.spectrum_inquiry_service import _load_injected, _pal_freq
+
+    ppa_info = ppa.get("ppaInfo") or {}
+    pal_ids = ppa_info.get("palId") or []
+    if not pal_ids:
+        return []
+    pals = _load_injected(db, "pal")
+    pal_by_id = {p.get("palId"): p for p in pals if p.get("palId")}
+    ranges: list[tuple[int, int]] = []
+    for pal_id in pal_ids:
+        pal = pal_by_id.get(pal_id)
+        if not pal:
+            continue
+        pf = _pal_freq(pal)
+        if pf:
+            ranges.append(pf)
+    return ranges
+
+
+# FAD_2 places local CBSDs in the PPA *neighborhood* (outside the polygon ring).
+_PPA_NEIGHBORHOOD_M = 1_000.0
+
+
+def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
+    """True when CBSD is in/near a peer PPA and the grant overlaps the PPA PAL band."""
+    from services.geometry import within_geojson_buffer_m
+
+    lat, lon = _cbsd_lat_lon(cbsd)
+    if lat is None or lon is None:
+        return False
+    for record in _peer_records_of_type(db, "zone"):
+        if record.get("usage") != "PPA" and "ppaInfo" not in record:
+            continue
+        if record.get("terminated") is True:
+            continue
+        if not within_geojson_buffer_m(
+            lat, lon, record.get("zone"), _PPA_NEIGHBORHOOD_M
+        ):
+            continue
+        for low, high in _ppa_protected_ranges(db, record):
+            if _freq_overlaps(grant.low_frequency, grant.high_frequency, low, high):
+                return True
+    return False
+
+
+def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
+    """True when CBSD is within ESC protection distance of a peer ESC sensor."""
+    from services.geometry import haversine_m
+
+    if not _freq_overlaps(
+        grant.low_frequency, grant.high_frequency, _ESC_LOW_HZ, _ESC_HIGH_HZ
+    ):
+        return False
+    lat, lon = _cbsd_lat_lon(cbsd)
+    if lat is None or lon is None:
+        return False
+    for record in _peer_records_of_type(db, "esc_sensor"):
+        inst = record.get("installationParam") or {}
+        esc_lat, esc_lon = inst.get("latitude"), inst.get("longitude")
+        if esc_lat is None or esc_lon is None:
+            continue
+        if haversine_m(lat, lon, float(esc_lat), float(esc_lon)) <= _ESC_PROTECTION_M:
+            return True
+    return False
+
+
 def apply_peer_conflict_to_local_grants(db: Session) -> None:
-    """GRA_6 / FAD_2 prep: terminate local grants when the same CBSD appears on a peer."""
+    """Terminate local grants that conflict with peer FAD (same CBSD, PPA, or ESC).
+
+    - Same-CBSD active peer grant → GRA_5 / GRA_6.
+    - Inside peer PPA + frequency overlap with linked PAL → FAD_2 (G4).
+    - Near peer ESC sensor + CBRS overlap → FAD_2 (G2).
+    """
     changed = False
     for cbsd in db.query(Cbsd).all():
-        if not peer_has_grant_for_cbsd(db, cbsd):
-            continue
         grants = (
             db.query(Grant)
             .filter_by(cbsd_id=cbsd.cbsd_id, terminated=False)
             .all()
         )
+        if not grants:
+            continue
+        same_cbsd = peer_has_grant_for_cbsd(db, cbsd)
         for grant in grants:
-            grant.terminated = True
-            changed = True
+            if same_cbsd or _grant_conflicts_peer_ppa(db, cbsd, grant) or _grant_conflicts_peer_esc(
+                db, cbsd, grant
+            ):
+                grant.terminated = True
+                changed = True
     if changed:
         db.commit()

@@ -162,12 +162,17 @@ def process_heartbeat(
             responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
             continue
 
-        # DPA suspension/termination before expiry check (HBT.12 accepts 500 or 501).
-        # Prefer 500 so the harness exits without the optional extra 300s sleep.
+        # DPA activation → suspend grant (501), do not terminate (GRA.1).
+        # HBT.12 also accepts 501; transmitExpireTime stays in the past via _base.
         if _grant_overlaps_active_dpa(db, grant):
-            grant.terminated = True
             responses.append(
-                _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
+                _base(
+                    SUSPENDED_GRANT,
+                    cbsd_id=cbsd_id,
+                    grant_id=grant_id,
+                    grant_expire=grant.grant_expire_time,
+                    heartbeat_interval=grant.heartbeat_interval or HEARTBEAT_INTERVAL_SEC,
+                )
             )
             continue
 

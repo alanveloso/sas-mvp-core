@@ -210,7 +210,12 @@ def _grant_expire_time(pal_license_exp: datetime | None) -> datetime:
     return min(default, pal_license_exp)
 
 
-def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def process_grant(
+    db: Session,
+    requests: list[dict[str, Any]],
+    *,
+    certificate_hash: str | None = None,
+) -> list[dict[str, Any]]:
     from services.meas_report import (
         FLAG_MEAS_REG,
         MEAS_WITHOUT_GRANT,
@@ -218,6 +223,7 @@ def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str,
         cbsd_meas_capabilities,
         validate_meas_report,
     )
+    from services.spectrum_inquiry_service import _cert_mismatch
 
     ask_meas = admin_flag_set(db, FLAG_MEAS_REG)
     responses: list[dict[str, Any]] = []
@@ -233,6 +239,11 @@ def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str,
         cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
         if not cbsd:
             # Unknown CBSD → 103 without echoing cbsdId (GRA.3).
+            responses.append(_resp(INVALID_PARAM))
+            continue
+
+        # Wrong client cert for this cbsdId → 103 without cbsdId/grantId (GRA.4).
+        if _cert_mismatch(cbsd, certificate_hash):
             responses.append(_resp(INVALID_PARAM))
             continue
 
