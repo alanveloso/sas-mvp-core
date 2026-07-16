@@ -288,6 +288,13 @@ def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str,
             responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
             continue
 
+        # GRA_5: CBSD already has an active grant on a peer SAS (same cbsdReferenceId).
+        from services.cpas_service import peer_has_grant_for_cbsd
+
+        if peer_has_grant_for_cbsd(db, cbsd):
+            responses.append(_resp(GRANT_CONFLICT, cbsd_id=cbsd_id))
+            continue
+
         grant_id = f"grant/{uuid.uuid4().hex}"
         expire = _grant_expire_time(pal_exp)
         db.add(

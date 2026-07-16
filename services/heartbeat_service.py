@@ -159,10 +159,20 @@ def process_heartbeat(
             )
             continue
 
-        if grant.terminated:
+        # GRA_6: peer FAD reports an active grant for the same CBSD → terminate (500).
+        from services.cpas_service import peer_has_grant_for_cbsd
+
+        if cbsd and peer_has_grant_for_cbsd(db, cbsd):
+            grant.terminated = True
             responses.append(
                 _base(TERMINATED_GRANT, cbsd_id=cbsd_id, grant_id=grant_id)
             )
+            continue
+
+        if grant.terminated:
+            # Relinquished / no longer valid grant → 103 (RLQ_2 requires 103;
+            # RLQ_1 / HBT_5 also accept 500). Do not echo grantId.
+            responses.append(_base(INVALID_PARAM, cbsd_id=cbsd_id))
             continue
 
         # DPA suspension/termination before expiry check (HBT.12 accepts 500 or 501).

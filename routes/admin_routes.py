@@ -27,6 +27,10 @@ from schemas.admin import (
     InjectFccIdRequest,
     InjectUserIdRequest,
 )
+from services.cpas_service import (
+    get_daily_activities_completed,
+    trigger_daily_activities,
+)
 from services.fad_service import (
     create_full_activity_dump,
     rewrite_esc_sensor_id,
@@ -251,13 +255,16 @@ def trigger_create_full_activity_dump(db: Session = Depends(get_db)):
 
 
 @router.post("/trigger/daily_activities_immediately")
-def trigger_daily_activities_immediately():
+def trigger_daily_activities_immediately(db: Session = Depends(get_db)):
+    """Start CPAS: pull peer FADs and apply conflict resolution."""
+    trigger_daily_activities(db)
     return _empty_ok()
 
 
 @router.post("/get_daily_activities_status")
-def get_daily_activities_status():
-    return JSONResponse({"completed": True})
+def get_daily_activities_status(db: Session = Depends(get_db)):
+    """Return completed=true only after peer FAD sync / conflict application finishes."""
+    return JSONResponse({"completed": get_daily_activities_completed(db)})
 
 
 @router.post("/trigger/load_dpas")

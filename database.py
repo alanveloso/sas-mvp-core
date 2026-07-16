@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DB_PATH = Path(__file__).resolve().parent / "sas_mvp.db"
@@ -15,6 +17,8 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+_init_lock = threading.Lock()
 
 
 class Base(DeclarativeBase):
@@ -32,12 +36,20 @@ def get_db():
 def init_db() -> None:
     from models import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    # RSA + ECDSA uvicorn processes share this module; serialize schema creation.
+    with _init_lock:
+        try:
+            Base.metadata.create_all(bind=engine)
+        except OperationalError as exc:
+            # Concurrent create_all can race on SQLite ("table already exists").
+            if "already exists" not in str(exc).lower():
+                raise
 
 
 def reset_db() -> None:
     """Drop and recreate all tables (admin/reset)."""
     from models import models  # noqa: F401
 
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
+    with _init_lock:
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)

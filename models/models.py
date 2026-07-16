@@ -127,6 +127,24 @@ class EscSensor(Base):
     data_json: Mapped[str] = mapped_column(Text)
 
 
+class PeerFadRecord(Base):
+    """Records imported from a peer SAS Full Activity Dump (UUT as client)."""
+
+    __tablename__ = "peer_fad_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "peer_sas_id", "record_type", "record_id", name="uq_peer_fad_record"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    peer_sas_id: Mapped[int] = mapped_column(ForeignKey("peer_sas.id"), index=True)
+    record_type: Mapped[str] = mapped_column(String(32), index=True)
+    record_id: Mapped[str] = mapped_column(String(256), index=True)
+    data_json: Mapped[str] = mapped_column(Text)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class FadDump(Base):
     """Local Full Activity Dump generation (UUT as SAS↔SAS server)."""
 

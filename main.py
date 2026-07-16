@@ -1,5 +1,8 @@
 """
-SAS MVP entrypoint — HTTPS on port 9000 for the WINNF harness.
+SAS MVP entrypoint — HTTPS + mTLS for the WINNF harness.
+
+- RSA endpoint:  https://0.0.0.0:9000  (server.cert)
+- ECDSA endpoint: https://0.0.0.0:9001  (server-ecc.cert) — SSS_3 / SSS_4
 
 Usage (from sas_mvp_core/):
   .venv/bin/python main.py
@@ -7,7 +10,9 @@ Usage (from sas_mvp_core/):
 
 from __future__ import annotations
 
+import ssl
 import sys
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -23,10 +28,26 @@ from database import init_db
 from routes.admin_routes import router as admin_router
 from routes.cbsd_routes import router as cbsd_router
 from routes.sas_sas_routes import router as sas_sas_router
+from services.mtls_auth import (
+    ECC_CIPHERS,
+    RSA_CIPHERS,
+    create_mtls_ssl_context,
+    patch_uvicorn_for_client_cert,
+)
 
 HARNESS_CERTS = ROOT.parent / "src" / "harness" / "certs"
 SSL_CERTFILE = HARNESS_CERTS / "server.cert"
 SSL_KEYFILE = HARNESS_CERTS / "server.key"
+SSL_ECC_CERTFILE = HARNESS_CERTS / "server-ecc.cert"
+SSL_ECC_KEYFILE = HARNESS_CERTS / "server-ecc.key"
+SSL_CA_CERTS = HARNESS_CERTS / "ca.cert"
+SSL_CRL_DIR = HARNESS_CERTS / "crl"
+
+RSA_PORT = 9000
+ECC_PORT = 9001
+
+# Must run before uvicorn binds so RequestResponseCycle exposes the TLS transport.
+patch_uvicorn_for_client_cert()
 
 app = FastAPI(title="SAS MVP Core", version="0.1.0")
 app.include_router(admin_router)
@@ -71,22 +92,83 @@ async def heartbeat_unsupported_version(version: str, request: Request):
     return JSONResponse({"heartbeatResponse": responses})
 
 
-def main():
-    import uvicorn
+def _rsa_ssl_context_factory(config, default_factory):
+    del config, default_factory
+    return create_mtls_ssl_context(
+        certfile=SSL_CERTFILE,
+        keyfile=SSL_KEYFILE,
+        ca_certs=SSL_CA_CERTS,
+        crl_dir=SSL_CRL_DIR,
+        ciphers=RSA_CIPHERS,
+    )
 
-    if not SSL_CERTFILE.exists() or not SSL_KEYFILE.exists():
-        raise SystemExit(
-            f"Certificados TLS não encontrados em {HARNESS_CERTS}. "
-            "Execute: cd src/harness/certs && bash generate_fake_certs.sh"
-        )
+
+def _ecc_ssl_context_factory(config, default_factory):
+    del config, default_factory
+    return create_mtls_ssl_context(
+        certfile=SSL_ECC_CERTFILE,
+        keyfile=SSL_ECC_KEYFILE,
+        ca_certs=SSL_CA_CERTS,
+        crl_dir=SSL_CRL_DIR,
+        ciphers=ECC_CIPHERS,
+    )
+
+
+def _run_uvicorn(port: int, certfile: Path, keyfile: Path, ssl_factory) -> None:
+    import uvicorn
 
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=9000,
-        ssl_certfile=str(SSL_CERTFILE),
-        ssl_keyfile=str(SSL_KEYFILE),
+        port=port,
+        ssl_certfile=str(certfile),
+        ssl_keyfile=str(keyfile),
+        ssl_ca_certs=str(SSL_CA_CERTS),
+        ssl_cert_reqs=ssl.CERT_REQUIRED,
+        ssl_context_factory=ssl_factory,
         reload=False,
+        log_level="info",
+    )
+
+
+def main():
+    missing = [
+        p.name
+        for p in (SSL_CERTFILE, SSL_KEYFILE, SSL_CA_CERTS)
+        if not p.exists()
+    ]
+    if missing:
+        raise SystemExit(
+            f"Certificados TLS não encontrados em {HARNESS_CERTS}: {missing}. "
+            "Execute: cd src/harness/certs && bash generate_fake_certs.sh"
+        )
+
+    if SSL_ECC_CERTFILE.exists() and SSL_ECC_KEYFILE.exists():
+        ecc_thread = threading.Thread(
+            target=_run_uvicorn,
+            kwargs={
+                "port": ECC_PORT,
+                "certfile": SSL_ECC_CERTFILE,
+                "keyfile": SSL_ECC_KEYFILE,
+                "ssl_factory": _ecc_ssl_context_factory,
+            },
+            name="uvicorn-ecc",
+            daemon=True,
+        )
+        ecc_thread.start()
+        print(f"ECDSA mTLS listener starting on https://0.0.0.0:{ECC_PORT}")
+    else:
+        print(
+            f"Aviso: {SSL_ECC_CERTFILE.name}/{SSL_ECC_KEYFILE.name} ausentes — "
+            "SSS_3/SSS_4 (ECDSA) não estarão disponíveis."
+        )
+
+    print(f"RSA mTLS listener starting on https://0.0.0.0:{RSA_PORT}")
+    _run_uvicorn(
+        port=RSA_PORT,
+        certfile=SSL_CERTFILE,
+        keyfile=SSL_KEYFILE,
+        ssl_factory=_rsa_ssl_context_factory,
     )
 
 

@@ -9,6 +9,7 @@ from models.models import (
     FadFile,
     FccIdRecord,
     Grant,
+    PeerFadRecord,
     PeerSas,
     UserIdRecord,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "FadFile",
     "FccIdRecord",
     "Grant",
+    "PeerFadRecord",
     "PeerSas",
     "UserIdRecord",
 ]

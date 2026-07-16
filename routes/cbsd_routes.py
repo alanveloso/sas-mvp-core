@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models.models import Cbsd, Grant
+from schemas.deregistration import DeregistrationBatchRequest
 from schemas.grant import GrantBatchRequest
 from schemas.heartbeat import HeartbeatBatchRequest
 from schemas.registration import RegistrationBatchRequest
+from schemas.relinquishment import RelinquishmentBatchRequest
 from schemas.spectrum_inquiry import SpectrumInquiryBatchRequest
+from services.deregistration_service import process_deregistration
 from services.grant_service import process_grant
 from services.heartbeat_service import process_heartbeat
 from services.registration_service import process_registration
+from services.relinquishment_service import process_relinquishment
 from services.spectrum_inquiry_service import process_spectrum_inquiry
 
 router = APIRouter(prefix="/v1.2", tags=["cbsd-sas"])
@@ -49,42 +50,16 @@ def spectrum_inquiry(
 
 
 @router.post("/relinquishment")
-async def relinquishment(body: dict[str, Any], db: Session = Depends(get_db)):
-    responses = []
-    for req in body.get("relinquishmentRequest") or []:
-        grant = (
-            db.query(Grant)
-            .filter_by(grant_id=req.get("grantId"), cbsd_id=req.get("cbsdId"))
-            .first()
-        )
-        if grant:
-            grant.terminated = True
-        responses.append(
-            {
-                "cbsdId": req.get("cbsdId"),
-                "grantId": req.get("grantId"),
-                "response": {"responseCode": 0},
-            }
-        )
-    db.commit()
+def relinquishment(
+    body: RelinquishmentBatchRequest, db: Session = Depends(get_db)
+):
+    responses = process_relinquishment(db, body.relinquishmentRequest)
     return JSONResponse({"relinquishmentResponse": responses})
 
 
 @router.post("/deregistration")
-async def deregistration(body: dict[str, Any], db: Session = Depends(get_db)):
-    responses = []
-    for req in body.get("deregistrationRequest") or []:
-        cbsd_id = req.get("cbsdId")
-        if not cbsd_id:
-            responses.append({"response": {"responseCode": 102}})
-            continue
-        cbsd = db.query(Cbsd).filter_by(cbsd_id=cbsd_id).first()
-        if cbsd:
-            for grant in db.query(Grant).filter_by(cbsd_id=cbsd_id).all():
-                grant.terminated = True
-            db.delete(cbsd)
-        responses.append(
-            {"cbsdId": cbsd_id, "response": {"responseCode": 0}}
-        )
-    db.commit()
+def deregistration(
+    body: DeregistrationBatchRequest, db: Session = Depends(get_db)
+):
+    responses = process_deregistration(db, body.deregistrationRequest)
     return JSONResponse({"deregistrationResponse": responses})
