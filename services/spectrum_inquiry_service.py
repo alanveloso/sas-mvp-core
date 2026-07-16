@@ -94,6 +94,10 @@ def _cbsd_location(cbsd: Cbsd) -> tuple[float | None, float | None]:
 
 
 def _load_injected(db: Session, kind: str) -> list[dict[str, Any]]:
+    if kind == "pal":
+        from services.pal_service import load_pal_records
+
+        return load_pal_records(db)
     rows = db.query(AdminInjectedData).filter_by(kind=kind).all()
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -189,6 +193,11 @@ def _build_available_channels(
     # PAL / PPA handling.
     pal_by_id = {p.get("palId"): p for p in pals if p.get("palId")}
     pal_channels: list[tuple[int, int]] = []
+    user_pal_ids = {
+        p.get("palId")
+        for p in pals
+        if p.get("userId") == cbsd.user_id and p.get("palId")
+    }
 
     for zone_payload in zones:
         record = zone_payload.get("record") or zone_payload
@@ -208,10 +217,14 @@ def _build_available_channels(
             pf = _pal_freq(pal)
             if not pf:
                 continue
-            if in_cluster:
-                # Cluster CBSD may use PAL; remove from GAA segments and add as PAL.
+            owned_by_cbsd = pal_id in user_pal_ids
+            if in_cluster and owned_by_cbsd:
+                # Cluster CBSD operated by PAL licensee may use PAL.
                 if any(_overlaps(s[0], s[1], pf[0], pf[1]) for s in segments):
                     pal_channels.append(pf)
+                segments = _subtract_range(segments, pf[0], pf[1])
+            elif in_cluster:
+                # Cluster member without matching userId: protect PAL only.
                 segments = _subtract_range(segments, pf[0], pf[1])
             elif in_ppa:
                 # Inside PPA but not in cluster → protect PAL (SIQ.5 / SIQ.2-like).

@@ -98,6 +98,21 @@ class Grant(Base):
     cbsd: Mapped[Cbsd] = relationship("Cbsd", back_populates="grants")
 
 
+class PalRecord(Base):
+    """Priority Access License injected by the marketplace via /admin/injectdata/pal_database_record."""
+
+    __tablename__ = "pal_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pal_id: Mapped[str] = mapped_column(String(256), unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(256), index=True)
+    low_frequency: Mapped[int] = mapped_column(Integer)
+    high_frequency: Mapped[int] = mapped_column(Integer)
+    license_status: Mapped[str] = mapped_column(String(16), default="VALID")
+    license_expiration: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    record_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
 class AdminInjectedData(Base):
     """Stores admin-injected incumbents / PAL / PPA for Spectrum Inquiry simulation."""
 

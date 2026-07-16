@@ -174,12 +174,14 @@ async def inject_wisp(request: Request, db: Session = Depends(get_db)):
 
 @router.post("/injectdata/pal_database_record")
 async def inject_pal_database_record(request: Request, db: Session = Depends(get_db)):
+    from services.pal_service import upsert_pal_records
+
     body: Any = {}
     try:
         body = await request.json()
     except Exception:
         pass
-    _store_injection(db, "pal", body)
+    upsert_pal_records(db, body)
     return _empty_ok()
 
 
@@ -352,17 +354,11 @@ async def create_ppa(request: Request, db: Session = Depends(get_db)):
     except Exception:
         pass
     pal_ids = body.get("palIds") or []
-    known_pal_ids: set[str] = set()
-    for row in db.query(AdminInjectedData).filter_by(kind="pal").all():
-        try:
-            rec = json.loads(row.data_json or "{}")
-        except json.JSONDecodeError:
-            continue
-        pid = rec.get("palId")
-        if pid:
-            known_pal_ids.add(pid)
+    from services.pal_service import known_pal_ids
 
-    missing = [pid for pid in pal_ids if pid not in known_pal_ids]
+    known_pal_ids_set = known_pal_ids(db)
+
+    missing = [pid for pid in pal_ids if pid not in known_pal_ids_set]
     if not pal_ids or missing:
         set_admin_flag(
             db, "ppa_creation_status", {"completed": True, "withError": True}

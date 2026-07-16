@@ -154,13 +154,14 @@ def _ppa_pal_context(
                     "in_cluster": in_cluster,
                     "in_ppa": in_ppa,
                     "license_exp": license_exp,
+                    "user_id": pal.get("userId"),
                 }
             )
     return contexts
 
 
 def _resolve_channel(
-    contexts: list[dict[str, Any]], low: int, high: int
+    contexts: list[dict[str, Any]], low: int, high: int, *, cbsd_user_id: str
 ) -> tuple[int | None, str | None, datetime | None]:
     """
     Return (error_code, channel_type, pal_license_exp).
@@ -186,7 +187,7 @@ def _resolve_channel(
 
     if covering_pal:
         for ctx in covering_pal:
-            if ctx["in_cluster"]:
+            if ctx["in_cluster"] and ctx.get("user_id") == cbsd_user_id:
                 exp = None
                 if ctx.get("license_exp"):
                     try:
@@ -287,7 +288,9 @@ def process_grant(
             continue
 
         contexts = _ppa_pal_context(db, cbsd)
-        ch_err, channel_type, pal_exp = _resolve_channel(contexts, low, high)
+        ch_err, channel_type, pal_exp = _resolve_channel(
+            contexts, low, high, cbsd_user_id=cbsd.user_id
+        )
         if ch_err is not None:
             responses.append(_resp(ch_err, cbsd_id=cbsd_id))
             continue

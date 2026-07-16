@@ -187,12 +187,11 @@ def _apply_exclusion_zone_kml(db: Session, body: bytes) -> None:
 
 
 def _sync_pal(db: Session, url: str) -> None:
+    from services.pal_service import upsert_pal_records
+
     body = _http_get(url, auth=False)
     records = json.loads(body.decode("utf-8"))
-    if not isinstance(records, list):
-        records = [records]
-    for rec in records:
-        _store_injection(db, "pal", rec)
+    upsert_pal_records(db, records)
 
 
 def _sync_cpi(db: Session, index_url: str) -> None:
