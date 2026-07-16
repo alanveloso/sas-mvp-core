@@ -10,13 +10,13 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models.models import BlacklistedFccId, Cbsd, FccIdRecord, Grant
+from services.geometry import point_in_geojson
 from services.spectrum_inquiry_service import (
     CBRS_HIGH_HZ,
     CBRS_LOW_HZ,
     _load_injected,
     _overlaps,
     _pal_freq,
-    _point_in_geojson,
 )
 
 SUCCESS = 0
@@ -137,7 +137,7 @@ def _ppa_pal_context(
         in_cluster = cbsd.cbsd_id in cluster
         in_ppa = False
         if lat is not None and lon is not None:
-            in_ppa = _point_in_geojson(lat, lon, record.get("zone"))
+            in_ppa = point_in_geojson(lat, lon, record.get("zone"))
 
         for pal_id in ppa_info.get("palId") or []:
             pal = pal_by_id.get(pal_id)
@@ -281,6 +281,15 @@ def process_grant(db: Session, requests: list[dict[str, Any]]) -> list[dict[str,
             responses.append(_resp(ch_err, cbsd_id=cbsd_id))
             continue
         assert channel_type is not None
+
+        # EXZ: CBSD inside / within 50 m of an exclusion zone with overlapping freq → 400.
+        lat, lon = _cbsd_location(cbsd)
+        if lat is not None and lon is not None:
+            from services.exclusion_zone_service import point_hits_exclusion_zone
+
+            if point_hits_exclusion_zone(db, lat, lon, low, high):
+                responses.append(_resp(INTERFERENCE, cbsd_id=cbsd_id))
+                continue
 
         existing = _active_grants(db, cbsd_id)
         pending = pending_by_cbsd.get(cbsd_id, [])

@@ -203,6 +203,29 @@ async def inject_zone(request: Request, db: Session = Depends(get_db)):
     return JSONResponse(zone_id)
 
 
+@router.post("/injectdata/exclusion_zone")
+async def inject_exclusion_zone(request: Request, db: Session = Depends(get_db)):
+    """Persist GeoJSON exclusion zone + frequencyRanges (EXZ_1)."""
+    from services.exclusion_zone_service import persist_exclusion_zone
+
+    body: dict[str, Any] = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    persist_exclusion_zone(db, body if isinstance(body, dict) else {})
+    return _empty_ok()
+
+
+@router.post("/trigger/enable_ntia_15_517")
+def trigger_enable_ntia_15_517(db: Session = Depends(get_db)):
+    """Enable NTIA TR 15-517 coastal exclusion zones (EXZ_2)."""
+    from services.exclusion_zone_service import enable_ntia_exclusion_zones
+
+    enable_ntia_exclusion_zones(db)
+    return _empty_ok()
+
+
 @router.post("/injectdata/peer_sas")
 async def inject_peer_sas(request: Request, db: Session = Depends(get_db)):
     """Persist peer SAS certificateHash + url for SAS↔SAS authorization."""

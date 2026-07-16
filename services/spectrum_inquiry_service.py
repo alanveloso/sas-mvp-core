@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import math
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from models.models import AdminInjectedData, BlacklistedFccId, Cbsd
+from services.geometry import haversine_m, point_in_geojson
 
 SUCCESS = 0
 BLACKLISTED = 101
@@ -25,51 +25,12 @@ RULE_APPLIED = "FCC_PART_96"
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    r = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlmb = math.radians(lon2 - lon1)
-    a = (
-        math.sin(dphi / 2) ** 2
-        + math.cos(p1) * math.cos(p2) * math.sin(dlmb / 2) ** 2
-    )
-    return 2 * r * math.asin(math.sqrt(a))
-
-
-def _point_in_ring(lon: float, lat: float, ring: list[list[float]]) -> bool:
-    """Ray-casting point-in-polygon for a GeoJSON linear ring [lon, lat]."""
-    inside = False
-    n = len(ring)
-    if n < 3:
-        return False
-    j = n - 1
-    for i in range(n):
-        xi, yi = float(ring[i][0]), float(ring[i][1])
-        xj, yj = float(ring[j][0]), float(ring[j][1])
-        if ((yi > lat) != (yj > lat)) and (
-            lon < (xj - xi) * (lat - yi) / (yj - yi + 1e-30) + xi
-        ):
-            inside = not inside
-        j = i
-    return inside
+    return haversine_m(lat1, lon1, lat2, lon2) / 1000.0
 
 
 def _point_in_geojson(lat: float, lon: float, zone: dict[str, Any] | None) -> bool:
-    if not zone:
-        return False
-    features = zone.get("features") or []
-    for feature in features:
-        geom = feature.get("geometry") or {}
-        gtype = geom.get("type")
-        coords = geom.get("coordinates") or []
-        if gtype == "Polygon" and coords:
-            if _point_in_ring(lon, lat, coords[0]):
-                return True
-        elif gtype == "MultiPolygon":
-            for poly in coords:
-                if poly and _point_in_ring(lon, lat, poly[0]):
-                    return True
-    return False
+    """Backward-compatible alias used by grant_service imports historically."""
+    return point_in_geojson(lat, lon, zone)
 
 
 def _overlaps(a_low: int, a_high: int, b_low: int, b_high: int) -> bool:
@@ -203,10 +164,15 @@ def _build_available_channels(
 
     # Exclusions from GWPZ / WISP when CBSD is inside the zone.
     if lat is not None and lon is not None:
+        from services.exclusion_zone_service import exclusion_freq_ranges_at_point
+
+        for ex_low, ex_high in exclusion_freq_ranges_at_point(db, lat, lon):
+            segments = _subtract_range(segments, ex_low, ex_high)
+
         for wisp in wisps:
             zone = wisp.get("zone")
             freq = _wisp_freq(wisp)
-            if freq and _point_in_geojson(lat, lon, zone):
+            if freq and point_in_geojson(lat, lon, zone):
                 segments = _subtract_range(segments, freq[0], freq[1])
 
         # FSS neighborhood: exclude 3650–3700 MHz within 150 km.
@@ -233,7 +199,7 @@ def _build_available_channels(
         in_cluster = cbsd.cbsd_id in cluster
         in_ppa = False
         if lat is not None and lon is not None:
-            in_ppa = _point_in_geojson(lat, lon, record.get("zone"))
+            in_ppa = point_in_geojson(lat, lon, record.get("zone"))
 
         for pal_id in ppa_info.get("palId") or []:
             pal = pal_by_id.get(pal_id)
