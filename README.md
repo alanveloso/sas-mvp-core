@@ -1,148 +1,132 @@
-# Spectrum Access System (SAS) MVP
+# Spectrum Access System Core (`sas-core`)
 
-MVP de um **Spectrum Access System** centralizado para a banda CBRS (3550–3700 MHz), implementado como API REST clássica. O objetivo não é um produto comercial de RF, e sim um *baseline* robusto e validado para **benchmark acadêmico e de pesquisa** — permitindo comparar métricas de rede como latência, convergência de estado e overhead de federação SAS-to-SAS.
+Reference implementation of a **Spectrum Access System (SAS)** for the CBRS band (3550–3700 MHz), aligned with WInnForum specifications. `sas-core` is a runnable FastAPI service — designed as a **reusable component** for research, benchmarking, and prototypes that need a WINNF-compliant SAS.
 
-O UUT (Unit Under Test) vive em [`sas_mvp_core/`](sas_mvp_core/) e foi validado contra o *harness* oficial da WInnForum (**WINNF-TS-0061**).
+This is not a commercial RF product. It is a robust, validated *baseline* for comparing metrics such as grant latency, state convergence, and SAS-to-SAS federation overhead.
+
+Protocol conformance is verified externally with the [WInnForum CBRS SAS Test Harness](https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness) (**WINNF-TS-0061**).
 
 ---
 
-## Arquitetura e Tecnologias
+## What `sas-core` exposes
 
-| Camada | Tecnologia |
-|--------|------------|
-| Runtime / API | Python 3, **FastAPI** (assíncrono) |
-| Persistência | **SQLite** + **SQLAlchemy** |
-| Cliente HTTP (CPAS / peer FAD) | **httpx** |
-| Servidor TLS | **Uvicorn** com mTLS (RSA `:9000`, ECDSA `:9001`) |
-| Protocolo CBSD ↔ SAS | REST `v1.2` |
-| Protocolo SAS ↔ SAS | REST `v1.3` (FAD, ESC sensor) |
+| Interface | Prefix / version | Authentication | Purpose |
+|-----------|------------------|----------------|---------|
+| **CBSD ↔ SAS** | `/v1.2` | mTLS (CBSD certificate) | Registration, Spectrum Inquiry, Grant, Heartbeat, Relinquishment, Deregistration |
+| **SAS ↔ SAS** | `/v1.3` | mTLS (authorized peer SAS) | Full Activity Dump (FAD), ESC sensor export |
+| **Admin** | `/admin` | mTLS (harness / operator) | Test data injection, CPAS triggers, database sync |
+
+Dual TLS server (Uvicorn):
+
+- `https://0.0.0.0:9000` — RSA (CBSD, Admin, SAS-SAS RSA)
+- `https://0.0.0.0:9001` — ECDSA (SAS-SAS ECDSA, e.g. SSS suite)
 
 ```
-CBSD / Harness ──mTLS──► https://localhost:9000  (RSA)
-                      ► https://localhost:9001  (ECDSA)
+CBSD / peer SAS ──mTLS──► sas-core (FastAPI)
                               │
                               ▼
-                     sas_mvp_core (FastAPI)
-                              │
-                              ▼
-                          SQLite (ORM)
+                          SQLite (SQLAlchemy)
 ```
 
 ---
 
-## Cobertura de Testes Oficiais (100% Pass)
+## Internal architecture
 
-O sistema **passa nas 14 suítes** do WInnForum (WINNF-TS-0061) exercitadas neste repositório:
+| Layer | Contents |
+|-------|----------|
+| `routes/` | CBSD endpoints (`cbsd_routes`), SAS-SAS (`sas_sas_routes`), Admin (`admin_routes`) |
+| `services/` | Business logic: registration, inquiry, grant, heartbeat, FAD, CPAS, zones, PAL, border rules |
+| `models/` | ORM entities: CBSD, Grant, PalRecord, PeerSas, FadDump, etc. |
+| `schemas/` | Pydantic validation for WINNF payloads |
+| `database.py` | SQLite, `init_db()`, `reset_db()` |
 
-| Domínio | Suítes | Fluxos cobertos |
-|---------|--------|-----------------|
-| **CBSD ↔ SAS** | REG, SIQ, GRA, HBT, RLQ, DRG | Registration, Spectrum Inquiry, Grant, Heartbeat, Relinquishment, Deregistration |
-| **SAS ↔ SAS** | FAD, SSS | Full Activity Dump, segurança mTLS peer-to-peer |
-| **CPAS** | (integrado em FAD / GRA / MCP-like) | Motor de atividades diárias: conflitos Peer-PPA e ESC |
-| **Borda e regras federais** | EXZ, BPR, EPR, QPR, WDB, FDB | Exclusion Zones, Border Protection, ESC, Quiet Zones, Whitelist DB, Federal DB |
-
-Destaques:
-
-- Fluxos CBSD-SAS completos com autenticação mTLS e *batch* (`MaximumBatchSize: 100`).
-- Federação SAS-SAS: manifesto FAD, download de arquivos e rejeição de peers não injetados.
-- CPAS resolve conflitos entre grants locais e proteções importadas do peer (PPA / ESC).
+Stack: Python 3, FastAPI, SQLAlchemy, Pydantic, httpx (CPAS client / database sync), Uvicorn with mTLS.
 
 ---
 
-## Decisões Pragmáticas e Limitações
+## Implemented domains
 
-Este MVP prioriza **reprodutibilidade e desempenho de rede** sobre fidelidade absoluta de radiofrequência física.
+`sas-core` covers the full CBSD-SAS lifecycle and the federated flows required by the official harness:
 
-### Ambiente *flat-earth* (NED)
+| Domain | Scope in core |
+|--------|---------------|
+| **CBSD registration & lifecycle** | Registration, Spectrum Inquiry, Grant, Heartbeat, Relinquishment, Deregistration |
+| **PAL / GAA** | PAL licenses (`pal_records`), PPA zones, GAA channels; rules by PPA cluster and `userId` |
+| **SAS-SAS federation** | Full Activity Dump generation and download; peer record import |
+| **CPAS** | Daily activities: peer-PPA conflicts, ESC, FSS/GWBL/EXZ/DPA sync |
+| **Border & federal rules** | Exclusion Zones, Border Protection (Canada), Quiet Zones, Federal DB, Whitelist DB |
 
-Os *tiles* USGS NED de elevação (~dezenas de GB no [Common-Data](https://github.com/Wireless-Innovation-Forum/Common-Data)) **não são obrigatórios** para rodar o harness localmente. O driver de terreno opera em modo *flat-earth* por padrão (`reference_models.geo.drive`), evitando falhas por *tiles* ausentes.
-
-Para usar NED real (quando os dados estiverem instalados em `data/geo/ned/`):
-
-```bash
-export SAS_USE_REAL_NED=1
-```
-
-### Matemática geoespacial (IAP)
-
-Cálculos de IAP / proteção espacial foram **simplificados e otimizados** para o caminho crítico do protocolo (estado, latência, federação), não para simular propagação ITM de alta fidelidade. Contornos e *ray-casting* de polígonos bastam para as asserções das suítes oficiais.
-
-### Compatibilidade de ambiente (Python 3.12 / fuso horário)
-
-- O *harness* original usava `ssl.wrap_socket`, removido no Python 3.12. Neste repositório o código foi atualizado para `SSLContext.wrap_socket` (ex.: `src/harness/database.py`, `sas_test_harness.py`).
-- A suíte **FDB_8** exige o fuso `US/Pacific`. Em hosts sem zoneinfo legado, instale dados de timezone atualizados:
-
-```bash
-pip install tzdata pytz --upgrade
-python3 -c "import pytz; pytz.timezone('US/Pacific')"
-```
+**Validated WINNF suites (14):** REG, SIQ, GRA, HBT, RLQ, DRG, FAD, SSS, EXZ, BPR, EPR, QPR, WDB, FDB.
 
 ---
 
-## Configuração e Instalação Local
+## Core limitations
 
-### 1. Clonar o repositório
+These choices are **intentional** in this repository. They affect RF fidelity only, not protocol conformance as tested by the harness:
+
+- **SQLite persistence** — suitable for benchmarking and prototypes; not a distributed production backend.
+- **Simplified geometry** (`services/geometry.py`) — ray-casting and Haversine instead of high-fidelity ITM propagation models.
+- **Pragmatic IAP** — spatial protections tuned for protocol state and latency, not full physical simulation.
+- **Batch size up to 100** — aligned with the harness `MaximumBatchSize`.
+
+---
+
+## Installation and running
+
+### 1. Clone and set up the environment
 
 ```bash
-git clone <url-deste-repositorio>
-cd Spectrum-Access-System
-```
+git clone <sas-core-repository-url>
+cd sas-core
 
-### 2. Ambiente virtual e dependências
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Dependências do UUT (SAS MVP)
-pip install -r sas_mvp_core/requirements.txt
-
-# Dependências do harness WInnForum (já incluídas na raiz, se for validar testes)
 pip install -r requirements.txt
-pip install tzdata pytz --upgrade   # necessário para FDB_8
 ```
 
-Dependências de sistema comuns ao harness (conforme a WInnForum): `libgeos`, `libgdal`, etc. Em Linux, use o `conda-environment.yml` da raiz como alternativa.
+### 2. mTLS certificates
 
-### 3. Certificados TLS de teste
-
-O UUT espera os certificados gerados pelo script do harness:
+The server expects test certificates at the relative path `../src/harness/certs/` (WInnForum harness default). Generate them with the official script:
 
 ```bash
-cd src/harness/certs
+git clone https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness.git /tmp/cbrs-harness
+cd /tmp/cbrs-harness/certs
 bash generate_fake_certs.sh
-cd ../../..
+
+# Adjust the path to match your local layout, for example:
+mkdir -p ../src/harness
+cp -r /tmp/cbrs-harness/certs ../src/harness/
 ```
 
-### 4. Subir o SAS MVP (portas 9000 / 9001)
+Required files: `server.cert`, `server.key`, `server-ecc.cert`, `server-ecc.key`, `ca.cert`.
+
+### 3. Start the service
 
 ```bash
-cd sas_mvp_core
 python main.py
 ```
 
-Isso inicia:
-
-- `https://0.0.0.0:9000` — mTLS RSA (CBSD, Admin, SAS-SAS RSA)
-- `https://0.0.0.0:9001` — mTLS ECDSA (ex.: SSS_3 / SSS_4)
-
-Mantenha o processo ativo em um terminal enquanto roda o harness em outro.
+The SQLite database (`sas_mvp.db`) is created automatically on startup.
 
 ---
 
-## Como Validar com os Testes Oficiais (WInnForum Harness)
+## Validation with the WInnForum harness
 
-Este repositório **já embute** o harness em `src/harness/`. Se preferir a fonte oficial:
+The harness is **not part of** this repository. To validate `sas-core`:
+
+1. Keep the service running (`python main.py`).
+2. Configure the harness `sas.cfg` to point at `localhost:9000` / `:9001` (versions `v1.2` / `v1.3`).
+3. Run the desired suites:
 
 ```bash
-git clone https://github.com/Wireless-Innovation-Forum/CBRS-SAS-Test-Harness.git
+cd <path-to-harness>
+python3 -m unittest testcases.WINNF_FT_S_REG_testcase -v
+python3 -m unittest testcases.WINNF_FT_S_SIQ_testcase -v
+python3 -m unittest testcases.WINNF_FT_S_GRA_testcase -v
+# … additional suites as needed
 ```
 
-(Em seguida, aponte a configuração e os certificados para o UUT local, ou use o `src/harness` deste projeto.)
-
-### Configurar `sas.cfg`
-
-Arquivo: [`src/harness/sas.cfg`](src/harness/sas.cfg)
+Minimal `sas.cfg` example:
 
 ```ini
 [SasConfig]
@@ -157,63 +141,39 @@ AdminId: sas_admin_id
 MaximumBatchSize: 100
 ```
 
-Resumo:
-
-| Interface | Base URL | Versão |
-|-----------|----------|--------|
-| Admin (teste) | `localhost:9000` | — |
-| CBSD ↔ SAS | `localhost:9000` / `:9001` | **v1.2** |
-| SAS ↔ SAS | `localhost:9000` / `:9001` | **v1.3** |
-
-### Rodar as suítes
-
-Com o UUT no ar e o venv ativo:
+**Environment note:** suite FDB_8 requires the `US/Pacific` timezone. Install `tzdata` if needed:
 
 ```bash
-cd src/harness
-
-# Exemplo: Registration
-python3 -m unittest testcases.WINNF_FT_S_REG_testcase -v
-
-# Outras suítes CBSD-SAS
-python3 -m unittest testcases.WINNF_FT_S_SIQ_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_GRA_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_HBT_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_RLQ_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_DRG_testcase -v
-
-# Federação e segurança
-python3 -m unittest testcases.WINNF_FT_S_FAD_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_SSS_testcase -v
-
-# Borda / federal
-python3 -m unittest testcases.WINNF_FT_S_EXZ_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_BPR_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_EPR_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_QPR_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_WDB_testcase -v
-python3 -m unittest testcases.WINNF_FT_S_FDB_testcase -v
-```
-
-Caso isolado (exemplo FAD_2):
-
-```bash
-python3 -m unittest testcases.WINNF_FT_S_FAD_testcase.FullActivityDumpTestcase.test_WINNF_FT_S_FAD_2 -v
+pip install tzdata pytz --upgrade
 ```
 
 ---
 
-## Estrutura do Projeto (resumo)
+## Repository layout
 
 ```
-sas_mvp_core/          # UUT — FastAPI + SQLite + CPAS
-src/harness/           # WInnForum Test Harness (WINNF-TS-0061)
-src/harness/sas.cfg    # URLs e versões apontando para o UUT
-prompts/               # Fases de implementação / documentação
+sas-core/
+├── main.py              # FastAPI + Uvicorn entrypoint (9000/9001)
+├── database.py          # SQLite / SQLAlchemy
+├── requirements.txt
+├── routes/              # CBSD v1.2, SAS-SAS v1.3, /admin
+├── services/            # Business logic
+├── models/              # ORM
+└── schemas/             # Pydantic
 ```
 
 ---
 
-## Licença e Atribuição
+## License
 
-O *harness* e modelos de referência em `src/` seguem a licença e autoria do [Wireless Innovation Forum](https://github.com/Wireless-Innovation-Forum). O MVP em `sas_mvp_core/` é um artefato de pesquisa para benchmark de sistemas SAS centralizados.
+`sas-core` is licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) for the full text.
+
+```text
+Copyright 2026 Alan Veloso
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+```
+
+**Third-party components:** the WInnForum CBRS SAS Test Harness and its reference models are separate works, subject to the license and attribution of the [Wireless Innovation Forum](https://github.com/Wireless-Innovation-Forum). Using `sas-core` does not grant any rights to WINNF specifications or harness code beyond their respective licenses.
