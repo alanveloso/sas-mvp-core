@@ -9,37 +9,37 @@ import logging
 import re
 import ssl
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from typing import Any
 
 import httpx
 from sqlalchemy.orm import Session
 
+from config import get_settings
 from models.models import AdminInjectedData, CpiUser
 
 logger = logging.getLogger(__name__)
 
-ROOT = Path(__file__).resolve().parent.parent
-HARNESS_CERTS = ROOT.parent / "src" / "harness" / "certs"
-CA_CERT = HARNESS_CERTS / "ca.cert"
-
-DB_BASIC_AUTH = ("username", "password")
-
 
 def _ssl_context() -> ssl.SSLContext:
+    settings = get_settings()
+    ca_cert = settings.resolved_ssl_ca_certs
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_REQUIRED
-    if CA_CERT.is_file():
-        ctx.load_verify_locations(cafile=str(CA_CERT))
+    if ca_cert.is_file():
+        ctx.load_verify_locations(cafile=str(ca_cert))
     return ctx
 
 
 def _http_get(url: str, *, auth: bool = False) -> bytes:
-    kwargs: dict[str, Any] = {"verify": _ssl_context(), "timeout": 30.0}
+    settings = get_settings()
+    kwargs: dict[str, Any] = {
+        "verify": _ssl_context(),
+        "timeout": settings.http_timeout_seconds,
+    }
     if auth:
-        kwargs["auth"] = DB_BASIC_AUTH
+        kwargs["auth"] = settings.db_sync_basic_auth
     with httpx.Client(**kwargs) as client:
         resp = client.get(url)
         resp.raise_for_status()

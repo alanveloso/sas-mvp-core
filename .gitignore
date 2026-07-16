@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 sas_mvp.db
 *.db-journal
+.env
+.env.local
+certs/

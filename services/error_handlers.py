@@ -13,6 +13,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from config import get_settings
+
 # WINNF-TS-0016 / Response.schema.json
 VERSION_UNSUPPORTED = 100
 BLACKLISTED = 101
@@ -21,7 +23,7 @@ INVALID_VALUE = 103
 CERT_ERROR = 104
 DEREGISTER = 105
 
-MAXIMUM_BATCH_SIZE = 100
+MAXIMUM_BATCH_SIZE = get_settings().max_batch_size
 
 _CBSD_RESPONSE_KEYS: dict[str, str] = {
     "registration": "registrationResponse",

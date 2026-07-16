@@ -5,14 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import ssl
-import threading
-from pathlib import Path
 from typing import Any
 
 import httpx
 from sqlalchemy.orm import Session
 
-from database import SessionLocal
+from config import get_settings
 from models.models import Cbsd, Grant, PeerFadRecord, PeerSas
 from services.fad_service import fad_cbsd_id
 from services.meas_report import clear_admin_flags, set_admin_flag
@@ -21,16 +19,6 @@ from services.mtls_auth import ALLOWED_CIPHERS
 logger = logging.getLogger(__name__)
 
 FLAG_CPAS_RUNNING = "cpas_running"
-
-ROOT = Path(__file__).resolve().parent.parent
-HARNESS_CERTS = ROOT.parent / "src" / "harness" / "certs"
-# Present the UUT SAS identity when pulling peer FADs (mTLS client).
-CLIENT_CERT = HARNESS_CERTS / "server.cert"
-CLIENT_KEY = HARNESS_CERTS / "server.key"
-CA_CERT = HARNESS_CERTS / "ca.cert"
-
-_cpas_lock = threading.Lock()
-_cpas_thread: threading.Thread | None = None
 
 
 def is_cpas_running(db: Session) -> bool:
@@ -44,55 +32,54 @@ def get_daily_activities_completed(db: Session) -> bool:
 
 
 def trigger_daily_activities(db: Session) -> None:
-    """Mark CPAS running and start peer FAD sync in a background thread."""
-    global _cpas_thread
+    """Mark CPAS running and enqueue the Celery worker (no local threads)."""
+    if is_cpas_running(db):
+        return
+
     set_admin_flag(db, FLAG_CPAS_RUNNING)
-
-    with _cpas_lock:
-        if _cpas_thread is not None and _cpas_thread.is_alive():
-            return
-        _cpas_thread = threading.Thread(
-            target=_run_cpas_worker,
-            name="cpas-peer-sync",
-            daemon=True,
-        )
-        _cpas_thread.start()
-
-
-def _run_cpas_worker() -> None:
-    db = SessionLocal()
     try:
-        from services.database_sync_service import sync_injected_database_urls
+        from tasks import run_cpas
 
-        sync_injected_database_urls(db)
-        run_peer_fad_sync(db)
-        apply_peer_conflict_to_local_grants(db)
+        run_cpas.delay()
     except Exception:
-        logger.exception("CPAS peer FAD sync failed")
-    finally:
+        logger.exception("Failed to enqueue CPAS Celery task; clearing running flag")
         try:
             clear_admin_flags(db, FLAG_CPAS_RUNNING)
         except Exception:
-            logger.exception("Failed to clear CPAS running flag")
-        db.close()
+            logger.exception("Failed to clear CPAS running flag after enqueue error")
+        raise
+
+
+def execute_cpas_pipeline(db: Session) -> None:
+    """Synchronous CPAS body used by the Celery task."""
+    from services.database_sync_service import sync_injected_database_urls
+
+    sync_injected_database_urls(db)
+    run_peer_fad_sync(db)
+    apply_peer_conflict_to_local_grants(db)
 
 
 def _client_ssl_context() -> ssl.SSLContext:
     """mTLS client context compatible with SasTestHarnessServer / WINNF ciphers."""
+    settings = get_settings()
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.check_hostname = False  # Peer URLs use localhost / harness hostnames.
     ctx.verify_mode = ssl.CERT_REQUIRED
-    ctx.load_verify_locations(cafile=str(CA_CERT))
-    ctx.load_cert_chain(certfile=str(CLIENT_CERT), keyfile=str(CLIENT_KEY))
+    ctx.load_verify_locations(cafile=str(settings.resolved_ssl_ca_certs))
+    ctx.load_cert_chain(
+        certfile=str(settings.resolved_client_certfile),
+        keyfile=str(settings.resolved_client_keyfile),
+    )
     ctx.set_ciphers(":".join(ALLOWED_CIPHERS))
     return ctx
 
 
 def _httpx_client() -> httpx.Client:
+    settings = get_settings()
     return httpx.Client(
         verify=_client_ssl_context(),
-        timeout=30.0,
+        timeout=settings.http_timeout_seconds,
     )
 
 
@@ -224,10 +211,27 @@ def peer_has_grant_for_cbsd(db: Session, cbsd: Cbsd) -> bool:
     return False
 
 
-# FAD_2: peer ESC neighborhood used by the harness (~40 km).
-_ESC_PROTECTION_M = 40_000.0
-_ESC_LOW_HZ = 3_550_000_000
-_ESC_HIGH_HZ = 3_700_000_000
+def _peer_esc_params() -> tuple[float, int, int]:
+    from profile.context import get_active_profile
+
+    profile = get_active_profile()
+    rule = profile.get_protection("peer_esc")
+    if rule and rule.enabled:
+        radius_m = float(rule.params.get("radius_m", 40_000.0))
+        low = int(rule.params.get("low_hz", profile.band_plan.low_hz))
+        high = int(rule.params.get("high_hz", profile.band_plan.high_hz))
+        return radius_m, low, high
+    bp = profile.band_plan
+    return 40_000.0, bp.low_hz, bp.high_hz
+
+
+def _peer_ppa_buffer_m() -> float:
+    from profile.context import get_active_profile
+
+    rule = get_active_profile().get_protection("peer_ppa")
+    if rule and rule.enabled:
+        return float(rule.params.get("buffer_m", 1_000.0))
+    return 1_000.0
 
 
 def _peer_records_of_type(db: Session, record_type: str) -> list[dict[str, Any]]:
@@ -274,10 +278,6 @@ def _ppa_protected_ranges(db: Session, ppa: dict[str, Any]) -> list[tuple[int, i
     return ranges
 
 
-# FAD_2 places local CBSDs in the PPA *neighborhood* (outside the polygon ring).
-_PPA_NEIGHBORHOOD_M = 1_000.0
-
-
 def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     """True when CBSD is in/near a peer PPA and the grant overlaps the PPA PAL band."""
     from services.geometry import within_geojson_buffer_m
@@ -285,14 +285,13 @@ def _grant_conflicts_peer_ppa(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     lat, lon = _cbsd_lat_lon(cbsd)
     if lat is None or lon is None:
         return False
+    buffer_m = _peer_ppa_buffer_m()
     for record in _peer_records_of_type(db, "zone"):
         if record.get("usage") != "PPA" and "ppaInfo" not in record:
             continue
         if record.get("terminated") is True:
             continue
-        if not within_geojson_buffer_m(
-            lat, lon, record.get("zone"), _PPA_NEIGHBORHOOD_M
-        ):
+        if not within_geojson_buffer_m(lat, lon, record.get("zone"), buffer_m):
             continue
         for low, high in _ppa_protected_ranges(db, record):
             if _freq_overlaps(grant.low_frequency, grant.high_frequency, low, high):
@@ -304,8 +303,9 @@ def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
     """True when CBSD is within ESC protection distance of a peer ESC sensor."""
     from services.geometry import haversine_m
 
+    esc_radius_m, esc_low, esc_high = _peer_esc_params()
     if not _freq_overlaps(
-        grant.low_frequency, grant.high_frequency, _ESC_LOW_HZ, _ESC_HIGH_HZ
+        grant.low_frequency, grant.high_frequency, esc_low, esc_high
     ):
         return False
     lat, lon = _cbsd_lat_lon(cbsd)
@@ -316,7 +316,7 @@ def _grant_conflicts_peer_esc(db: Session, cbsd: Cbsd, grant: Grant) -> bool:
         esc_lat, esc_lon = inst.get("latitude"), inst.get("longitude")
         if esc_lat is None or esc_lon is None:
             continue
-        if haversine_m(lat, lon, float(esc_lat), float(esc_lon)) <= _ESC_PROTECTION_M:
+        if haversine_m(lat, lon, float(esc_lat), float(esc_lon)) <= esc_radius_m:
             return True
     return False
 

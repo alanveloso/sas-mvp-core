@@ -1,0 +1,11 @@
+.git
+__pycache__
+**/__pycache__
+*.pyc
+**/*.pyc
+.venv
+sas_mvp.db
+*.db
+.pytest_cache
+.env
+certs

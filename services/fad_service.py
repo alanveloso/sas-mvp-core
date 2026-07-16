@@ -10,6 +10,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from config import get_settings
 from models.models import (
     AdminInjectedData,
     Cbsd,
@@ -19,10 +20,23 @@ from models.models import (
     Grant,
 )
 
-# Matches src/harness/sas.cfg AdminId / SasSasRsaBaseUrl.
-SAS_ADMIN_ID = "sas_admin_id"
-FAD_PUBLIC_BASE = "https://localhost:9000"
-SAS_SAS_VERSION = "v1.3"
+
+def _sas_admin_id() -> str:
+    return get_settings().sas_admin_id
+
+
+def _fad_public_base() -> str:
+    return get_settings().fad_public_base.rstrip("/")
+
+
+def _sas_sas_version() -> str:
+    return get_settings().sas_sas_version
+
+
+# Backwards-compatible module-level names (resolved at import for harness defaults).
+SAS_ADMIN_ID = get_settings().sas_admin_id
+FAD_PUBLIC_BASE = get_settings().fad_public_base
+SAS_SAS_VERSION = get_settings().sas_sas_version
 
 _REGISTRATION_FIELDS = (
     "fccId",
@@ -47,25 +61,27 @@ def fad_cbsd_id(fcc_id: str, serial_number: str) -> str:
 
 def rewrite_esc_sensor_id(record_id: str | None) -> str:
     """Force esc_sensor/{AdminId}/... prefix required by FAD_1."""
+    admin_id = _sas_admin_id()
     if not record_id:
-        return f"esc_sensor/{SAS_ADMIN_ID}/0"
+        return f"esc_sensor/{admin_id}/0"
     parts = record_id.split("/")
     if len(parts) >= 3 and parts[0] == "esc_sensor":
-        return f"esc_sensor/{SAS_ADMIN_ID}/{'/'.join(parts[2:])}"
+        return f"esc_sensor/{admin_id}/{'/'.join(parts[2:])}"
     if len(parts) >= 2 and parts[0] == "esc_sensor":
-        return f"esc_sensor/{SAS_ADMIN_ID}/{parts[1]}"
-    return f"esc_sensor/{SAS_ADMIN_ID}/{record_id}"
+        return f"esc_sensor/{admin_id}/{parts[1]}"
+    return f"esc_sensor/{admin_id}/{record_id}"
 
 
 def rewrite_zone_id(zone_id: str | None, *, fallback_suffix: str = "0") -> str:
     """Force zone/ppa/{AdminId}/... prefix required by FAD_1."""
+    admin_id = _sas_admin_id()
     if not zone_id:
-        return f"zone/ppa/{SAS_ADMIN_ID}/{fallback_suffix}"
+        return f"zone/ppa/{admin_id}/{fallback_suffix}"
     parts = zone_id.split("/")
     if len(parts) >= 3 and parts[0] == "zone" and parts[1] == "ppa":
         rest = "/".join(parts[3:]) if len(parts) > 3 else fallback_suffix
-        return f"zone/ppa/{SAS_ADMIN_ID}/{rest}"
-    return f"zone/ppa/{SAS_ADMIN_ID}/{fallback_suffix}"
+        return f"zone/ppa/{admin_id}/{rest}"
+    return f"zone/ppa/{admin_id}/{fallback_suffix}"
 
 
 def _fmt_utc(dt: datetime) -> str:
@@ -225,12 +241,13 @@ def _make_dump_file(
         "recordData": record_data,
     }
     content = json.dumps(envelope, separators=(",", ":"), ensure_ascii=False)
-    url_path = f"/{SAS_SAS_VERSION}/{record_type}/{filename}"
+    version = _sas_sas_version()
+    url_path = f"/{version}/{record_type}/{filename}"
     entry = {
-        "url": f"{FAD_PUBLIC_BASE}{url_path}",
+        "url": f"{_fad_public_base()}{url_path}",
         "checksum": _sha1_of(content),
         "size": len(content.encode("utf-8")),
-        "version": SAS_SAS_VERSION,
+        "version": version,
         "recordType": record_type,
     }
     return entry, url_path, content
